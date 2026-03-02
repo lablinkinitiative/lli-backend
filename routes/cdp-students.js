@@ -83,17 +83,22 @@ router.get('/programs/:slug', (req, res) => {
 // ── GET /export/cdp-format ────────────────────────────────
 // Returns programs converted to CDP app Program format for programs.json sync
 
+// Use SECTOR_LABELS (defined below with inferSector) for the export endpoint
 const SECTOR_TO_CATEGORY = {
-  doe_labs: 'DOE National Labs',
-  federal_science: 'Federal / Science',
-  space_defense: 'Federal / Space',
-  biomedical: 'Federal / Biomedical',
-  high_school: 'Academic Research',
-  diversity_bridge: 'Equity / Federal',
-  industry_tech: 'Industry / Tech',
-  community_college: 'Academic / Community College',
-  fellowships: 'Academic Research',
-  other: 'Academic Research',
+  doe_labs:         'DOE National Labs',
+  federal_science:  'Federal Science Agencies',
+  space_defense:    'Space & Defense',
+  biomedical:       'Biomedical & Health',
+  high_school:      'High School Programs',
+  diversity_bridge: 'Equity & Access',
+  industry_tech:    'Industry: Tech & Computing',
+  industry_biotech: 'Industry: Life Sciences',
+  industry_energy:  'Industry: Energy & Climate',
+  environmental:    'Environmental Science',
+  community_college:'Community College',
+  fellowships:      'Competitive Fellowships',
+  academic:         'University Research',
+  other:            'Academic Research',
 };
 
 const FIELD_TO_AREA = {
@@ -118,7 +123,7 @@ router.get('/export/cdp-format', (req, res) => {
   const programs = db.prepare('SELECT * FROM cdp_programs WHERE is_active = 1 ORDER BY created_at DESC').all();
 
   const cdpPrograms = programs.map(p => {
-    const sector = _slugSectorMap[p.slug] || inferSector(p.slug, p.program_type);
+    const sector = p.sector || _slugSectorMap[p.slug] || inferSector(p.slug, p.program_type, p.organization);
     const category = SECTOR_TO_CATEGORY[sector] || 'Academic Research';
 
     // Parse JSON fields safely
@@ -177,23 +182,164 @@ router.get('/export/cdp-format', (req, res) => {
 });
 
 // ── GET /intern/opportunities ────────────────────────────────
-// Returns programs in intern site format (opportunity_id, sector, deadline_notes, is_paid, tags, etc.)
+// Returns programs in intern site format with multi-category support
 
 const fs = require('fs');
 const path = require('path');
 
-function inferSector(slug, programType) {
+// ── Sector display labels ─────────────────────────────────────
+const SECTOR_LABELS = {
+  doe_labs:         'DOE National Labs',
+  federal_science:  'Federal Science Agencies',
+  space_defense:    'Space & Defense',
+  biomedical:       'Biomedical & Health',
+  industry_tech:    'Industry: Tech & Computing',
+  industry_biotech: 'Industry: Life Sciences',
+  industry_energy:  'Industry: Energy & Climate',
+  environmental:    'Environmental Science',
+  diversity_bridge: 'Equity & Access',
+  high_school:      'High School Programs',
+  community_college:'Community College',
+  fellowships:      'Competitive Fellowships',
+  academic:         'University Research',
+  other:            'Other',
+};
+
+// ── Improved sector inference (slug-prefix + org fallback) ────
+function inferSector(slug, programType, organization) {
   const s = slug.toLowerCase();
-  if (s.startsWith('doe-') || s.startsWith('suli-') || s.startsWith('scgsr-') || s.startsWith('nnsa-')) return 'doe_labs';
-  if (s.startsWith('nsf-') || s.startsWith('nih-') || s.startsWith('noaa-') || s.startsWith('epa-') || s.startsWith('usda-') || s.startsWith('usgs-') || s.startsWith('nist-')) return 'federal_science';
-  if (s.startsWith('nasa-') || s.startsWith('afrl-') || s.startsWith('nreip-') || s.startsWith('smart-') || s.startsWith('dod-') || s.startsWith('darpa-')) return 'space_defense';
-  if (s.startsWith('hhmi-') || s.startsWith('jackson-') || s.startsWith('mayo-') || s.startsWith('amgen-scholars') || s.startsWith('surf-') || s.startsWith('nih-biomedical')) return 'biomedical';
-  if (s.startsWith('rsi-') || s.startsWith('smash-') || s.startsWith('primes-') || s.startsWith('histep-') || s.startsWith('high-school-') || s.startsWith('ssp-')) return 'high_school';
-  if (s.startsWith('marc-') || s.startsWith('lsamp-') || s.startsWith('mcnair-') || s.startsWith('aises-') || s.startsWith('sacnas-') || s.startsWith('nnbms-') || s.startsWith('abrcms-') || s.startsWith('hacu-') || s.startsWith('hbcu-') || s.startsWith('trio-')) return 'diversity_bridge';
-  if (s.startsWith('google-') || s.startsWith('nvidia-') || s.startsWith('microsoft-') || s.startsWith('intel-') || s.startsWith('boeing-') || s.startsWith('lockheed-') || s.startsWith('apple-') || s.startsWith('meta-') || s.startsWith('amazon-')) return 'industry_tech';
-  if (s.startsWith('ccsep-') || s.startsWith('year-up-') || s.startsWith('ncas-') || s.startsWith('cc-') || s.includes('community-college')) return 'community_college';
-  if (s.startsWith('goldwater-') || s.startsWith('grfp-') || s.startsWith('hertz-') || s.startsWith('nsf-graduate-') || s.startsWith('soros-') || s.startsWith('churchill-') || s.startsWith('knight-') || programType === 'fellowship') return 'fellowships';
+  const org = (organization || '').toLowerCase();
+
+  // DOE National Labs — specific lab abbreviations first
+  if (s.startsWith('doe-') || s.startsWith('suli-') || s.startsWith('scgsr-') || s.startsWith('nnsa-') ||
+      s.startsWith('inl-') || s.startsWith('ornl-') || s.startsWith('llnl-') || s.startsWith('sandia-') ||
+      s.startsWith('pnnl-') || s.startsWith('nrel-') || s.startsWith('anl-') || s.startsWith('lbnl-') ||
+      s.startsWith('bnl-') || s.startsWith('fermilab-') || s.startsWith('slac-') || s.startsWith('lanl-') ||
+      s.startsWith('orau-') || s.startsWith('orise-') || s.startsWith('ames-lab-') || s.startsWith('snl-') ||
+      s.startsWith('tjnaf-') || s.startsWith('srnl-')) return 'doe_labs';
+
+  // Federal Science
+  if (s.startsWith('nsf-') || s.startsWith('nih-') || s.startsWith('noaa-') || s.startsWith('epa-') ||
+      s.startsWith('usda-') || s.startsWith('usgs-') || s.startsWith('nist-') || s.startsWith('smithsonian-') ||
+      s.startsWith('usaid-') || s.startsWith('census-') || s.startsWith('nps-') || s.startsWith('fws-')) return 'federal_science';
+
+  // Space & Defense
+  if (s.startsWith('nasa-') || s.startsWith('afrl-') || s.startsWith('nreip-') || s.startsWith('smart-') ||
+      s.startsWith('dod-') || s.startsWith('darpa-') || s.startsWith('afosr-') || s.startsWith('space-') ||
+      s.startsWith('seds-') || s.startsWith('arpa-')) return 'space_defense';
+
+  // Biomedical
+  if (s.startsWith('hhmi-') || s.startsWith('jackson-') || s.startsWith('mayo-') || s.startsWith('amgen-scholars') ||
+      s.startsWith('surf-caltech') || s.startsWith('mskcc-') || s.startsWith('dana-farber-') ||
+      s.startsWith('cold-spring-') || s.startsWith('salk-')) return 'biomedical';
+
+  // Diversity & Equity
+  if (s.startsWith('marc-') || s.startsWith('lsamp-') || s.startsWith('mcnair-') || s.startsWith('aises-') ||
+      s.startsWith('sacnas-') || s.startsWith('nnbms-') || s.startsWith('abrcms-') || s.startsWith('hacu-') ||
+      s.startsWith('hbcu-') || s.startsWith('trio-') || s.startsWith('nsbe-') || s.startsWith('swe-') ||
+      s.startsWith('shpe-') || s.startsWith('bridges-') || s.startsWith('the-alliance-') ||
+      s.startsWith('nnbms-') || s.startsWith('gen-10-')) return 'diversity_bridge';
+
+  // High School
+  if (s.startsWith('rsi-') || s.startsWith('smash-') || s.startsWith('primes-') || s.startsWith('histep-') ||
+      s.startsWith('high-school-') || s.startsWith('ssp-') || s.startsWith('hs-') ||
+      s.includes('-high-school') || s.startsWith('tasp-') || s.startsWith('research-science-initiative')) return 'high_school';
+
+  // Industry: Energy & Climate
+  if (s.startsWith('tesla-') || s.startsWith('nextera-') || s.startsWith('next-era-') || s.startsWith('sunrun-') ||
+      s.startsWith('vestas-') || s.startsWith('first-solar-') || s.startsWith('chevron-') || s.startsWith('exxon-') ||
+      s.startsWith('bp-') || s.startsWith('shell-') || s.startsWith('halliburton-') || s.startsWith('nrg-')) return 'industry_energy';
+
+  // Industry: Life Sciences / Biotech
+  if (s.startsWith('genentech-') || s.startsWith('amgen-') || s.startsWith('illumina-') || s.startsWith('regeneron-') ||
+      s.startsWith('biogen-') || s.startsWith('vertex-') || s.startsWith('crispr-') || s.startsWith('10x-genomics-') ||
+      s.startsWith('abbvie-') || s.startsWith('merck-') || s.startsWith('pfizer-') || s.startsWith('bristol-myers-')) return 'industry_biotech';
+
+  // Industry: Tech & Computing
+  if (s.startsWith('google-') || s.startsWith('nvidia-') || s.startsWith('microsoft-') || s.startsWith('intel-') ||
+      s.startsWith('boeing-') || s.startsWith('lockheed-') || s.startsWith('apple-') || s.startsWith('meta-') ||
+      s.startsWith('amazon-') || s.startsWith('ibm-') || s.startsWith('qualcomm-') || s.startsWith('amd-') ||
+      s.startsWith('salesforce-') || s.startsWith('linkedin-') || s.startsWith('uber-') || s.startsWith('adobe-') ||
+      s.startsWith('intuit-') || s.startsWith('tsmc-') || s.startsWith('broadcom-') || s.startsWith('twitter-') ||
+      s.startsWith('tiktok-') || s.startsWith('snap-') || s.startsWith('roblox-') || s.startsWith('palantir-')) return 'industry_tech';
+
+  // Environmental Science
+  if (s.startsWith('edf-') || s.startsWith('nrdc-') || s.startsWith('sierra-club-') || s.startsWith('wri-') ||
+      s.startsWith('rmi-') || s.startsWith('rocky-mountain-') || s.startsWith('conservation-') ||
+      s.startsWith('wwf-') || s.startsWith('nature-conservancy-')) return 'environmental';
+
+  // Community College
+  if (s.startsWith('ccsep-') || s.startsWith('year-up-') || s.startsWith('ncas-') || s.startsWith('cc-') ||
+      s.includes('community-college') || s.startsWith('ptk-')) return 'community_college';
+
+  // Competitive Fellowships — check programType first, then slug
+  if (programType === 'fellowship' || programType === 'scholarship') return 'fellowships';
+  if (s.startsWith('goldwater-') || s.startsWith('grfp-') || s.startsWith('hertz-') || s.startsWith('nsf-graduate-') ||
+      s.startsWith('soros-') || s.startsWith('churchill-') || s.startsWith('knight-') || s.startsWith('fulbright-') ||
+      s.startsWith('barry-') || s.startsWith('nsf-grfp') || s.startsWith('doe-csgf')) return 'fellowships';
+
+  // Organization-based fallback
+  if (org.includes('national lab') || org.includes('department of energy') || org === 'doe national labs') return 'doe_labs';
+  if (org.includes('smithsonian') || org.includes('nsf') || org.includes('noaa') || org.includes('usda') ||
+      org.includes('federal') && !org.includes('platform')) return 'federal_science';
+  if (org.includes('nasa') || org.includes('space') || org.includes('defense') || org.includes('air force')) return 'space_defense';
+  if (org.includes('industry') && org.includes('energy') || org.includes('clean energy') || org.includes('solar') ||
+      org.includes('wind energy')) return 'industry_energy';
+  if (org.includes('industry') && org.includes('tech') || org.includes('computing') || org.includes('software')) return 'industry_tech';
+  if (org.includes('equity') || org.includes('diversity') || org.includes('bridge') || org.includes('professional org')) return 'diversity_bridge';
+  if (org.includes('community college')) return 'community_college';
+  if (org.includes('platform') || org.includes('aggregator')) return 'other';
+
   return 'other';
+}
+
+// ── Derive all applicable categories for a program ───────────
+function deriveCategories(primarySector, slug, eligibility, programType, stemFields, organization) {
+  const cats = new Set([primarySector]);
+  const s = slug.toLowerCase();
+  const org = (organization || '').toLowerCase();
+
+  // Cross-list HS programs
+  if (primarySector !== 'high_school' && (s.includes('high-school') || s.includes('hs-'))) cats.add('high_school');
+
+  // Cross-list CC programs
+  if (primarySector !== 'community_college') {
+    try {
+      const elig = typeof eligibility === 'string' ? JSON.parse(eligibility || '{}') : (eligibility || {});
+      if (elig.education_level && elig.education_level.includes('community-college')) cats.add('community_college');
+    } catch (_) {}
+    if (s.includes('community-college') || s.startsWith('cc-') || org.includes('community college')) cats.add('community_college');
+  }
+
+  // Cross-list diversity programs
+  if (primarySector !== 'diversity_bridge') {
+    const diversityKeywords = ['diversity', 'underrepresented', 'minority', 'hbcu', 'hacu', 'tribal', 'first-gen',
+                               'women', 'lsamp', 'mcnair', 'marc', 'aises', 'sacnas', 'nsbe', 'shpe', 'swe', 'hacu'];
+    if (diversityKeywords.some(k => s.includes(k) || org.includes(k))) cats.add('diversity_bridge');
+  }
+
+  // Cross-list fellowships
+  if (primarySector !== 'fellowships' && (programType === 'fellowship' || programType === 'scholarship')) {
+    cats.add('fellowships');
+  }
+
+  // Cross-list biomedical sector programs that have biomedical STEM fields
+  if (primarySector !== 'biomedical') {
+    try {
+      const fields = typeof stemFields === 'string' ? JSON.parse(stemFields || '[]') : (stemFields || []);
+      if (fields.some(f => ['biomedical', 'public-health', 'neuroscience'].includes(f))) cats.add('biomedical');
+    } catch (_) {}
+  }
+
+  // Cross-list environmental
+  if (primarySector !== 'environmental') {
+    try {
+      const fields = typeof stemFields === 'string' ? JSON.parse(stemFields || '[]') : (stemFields || []);
+      if (fields.some(f => ['environmental-science', 'geology'].includes(f))) cats.add('environmental');
+    } catch (_) {}
+  }
+
+  return Array.from(cats);
 }
 
 function buildSlugSectorMap() {
@@ -226,23 +372,42 @@ let _slugSectorMap = null;
 
 router.get('/intern/opportunities', (req, res) => {
   if (!_slugSectorMap) _slugSectorMap = buildSlugSectorMap();
+
+  // Support ?sector= filter (checks categories array, not just primary sector)
+  const sectorFilter = req.query.sector || null;
+
+  // Exclude job aggregator platforms from opportunity listings
+  const EXCLUDE_SLUGS = new Set(['handshake', 'zintellect-orise']);
+
   const allPrograms = db.prepare('SELECT * FROM cdp_programs WHERE is_active = 1 ORDER BY created_at DESC').all();
 
-  // Filter out programs where deadline has already passed
+  // Filter out passed deadlines and platform entries
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const programs = allPrograms.filter(p => {
-    if (!p.deadline) return true; // No deadline = always show (rolling)
+    if (EXCLUDE_SLUGS.has(p.slug)) return false;
+    if (!p.deadline) return true;
     const d = new Date(p.deadline);
     return isNaN(d.getTime()) || d >= today;
   });
 
   const opportunities = programs.map(p => {
-    const sector = _slugSectorMap[p.slug] || inferSector(p.slug, p.program_type);
+    // Sector: use DB sector column if set, then pipeline map, then inference
+    const primarySector = p.sector ||
+      _slugSectorMap[p.slug] ||
+      inferSector(p.slug, p.program_type, p.organization);
+
+    // Categories: use DB categories column if set, else derive dynamically
+    let categories;
+    if (p.categories) {
+      try { categories = JSON.parse(p.categories); } catch (_) { categories = [primarySector]; }
+    } else {
+      categories = deriveCategories(primarySector, p.slug, p.eligibility, p.program_type, p.stem_fields, p.organization);
+    }
+
     const stipend = p.stipend || null;
     const isPaid = stipend ? !(/unpaid|volunteer|no stipend/i.test(stipend)) : false;
 
-    // Deadline notes from ISO date
     let deadlineNotes = '';
     if (p.deadline) {
       try {
@@ -251,12 +416,12 @@ router.get('/intern/opportunities', (req, res) => {
       } catch (_) { deadlineNotes = p.deadline; }
     }
 
-    // Tags
     const tags = [];
     if (p.eligibility) {
       try {
         const elig = typeof p.eligibility === 'string' ? JSON.parse(p.eligibility) : p.eligibility;
         if (elig.education_level && elig.education_level.includes('community-college')) tags.push('cc_friendly');
+        if (elig.education_level && elig.education_level.includes('high-school')) tags.push('hs_eligible');
       } catch (_) {}
     }
     if (stipend && /housing/i.test(stipend)) tags.push('housing_provided');
@@ -265,7 +430,9 @@ router.get('/intern/opportunities', (req, res) => {
       opportunity_id: p.slug,
       title: p.title,
       organization: p.organization,
-      sector,
+      sector: primarySector,
+      categories,
+      category_labels: categories.map(c => SECTOR_LABELS[c] || c),
       description: p.description || '',
       stipend: stipend || 'See listing',
       deadline_notes: deadlineNotes,
@@ -281,7 +448,16 @@ router.get('/intern/opportunities', (req, res) => {
     };
   });
 
-  res.json({ opportunities, total: opportunities.length });
+  // Apply sector filter — match if sector is in categories array
+  const filtered = sectorFilter
+    ? opportunities.filter(o => o.categories.includes(sectorFilter))
+    : opportunities;
+
+  res.json({
+    opportunities: filtered,
+    total: filtered.length,
+    sectors: SECTOR_LABELS,
+  });
 });
 
 // ── GET /students/me/saved-programs ────────────────────────

@@ -23,6 +23,19 @@ DEFAULT_DB = Path("/home/agent/data/lablink.db")
 DEFAULT_INPUT = BASE_DIR / "output" / "all-programs.json"
 
 VALID_TYPES = {"internship", "fellowship", "scholarship", "workshop", "research", "other"}
+
+# Map pipeline output filename → sector key
+FILENAME_TO_SECTOR = {
+    "01-doe-national-labs": "doe_labs",
+    "02-federal-science": "federal_science",
+    "03-space-defense": "space_defense",
+    "04-biomedical-health": "biomedical",
+    "05-high-school": "high_school",
+    "06-diversity-bridge": "diversity_bridge",
+    "07-industry-tech": "industry_tech",
+    "08-community-college": "community_college",
+    "09-competitive-fellowships": "fellowships",
+}
 VALID_FIELDS = {
     "biology", "chemistry", "physics", "cs", "engineering", "math",
     "environmental-science", "public-health", "neuroscience", "materials-science",
@@ -173,13 +186,30 @@ def normalize_program(prog: dict) -> dict | None:
         "remote": normalize_remote(prog.get("remote", False)),
         "url": url[:500] if url else None,
         "is_active": 1,
+        "sector": prog.get("_sector"),  # injected by upsert_programs if known
     }
 
 
-def upsert_programs(programs: list, db_path: Path) -> dict:
-    """Upsert programs into cdp_programs table."""
+def upsert_programs(programs: list, db_path: Path, sector: str = None) -> dict:
+    """Upsert programs into cdp_programs table.
+
+    If sector is provided, it will be stored in the sector column for all programs
+    in this batch (overrides any per-program _sector field).
+    """
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
+
+    # Ensure sector and categories columns exist (migration safety)
+    try:
+        conn.execute("ALTER TABLE cdp_programs ADD COLUMN sector TEXT")
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE cdp_programs ADD COLUMN categories TEXT")
+        conn.commit()
+    except Exception:
+        pass
 
     inserted = 0
     updated = 0
@@ -189,10 +219,15 @@ def upsert_programs(programs: list, db_path: Path) -> dict:
     now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
     for prog_raw in programs:
+        # Inject sector for normalization
+        if sector:
+            prog_raw["_sector"] = sector
         prog = normalize_program(prog_raw)
         if not prog:
             skipped += 1
             continue
+
+        prog_sector = sector or prog.get("sector")
 
         try:
             existing = conn.execute(
@@ -200,21 +235,20 @@ def upsert_programs(programs: list, db_path: Path) -> dict:
             ).fetchone()
 
             if existing:
-                # Update existing record (preserve id, created_at)
                 conn.execute("""
                     UPDATE cdp_programs SET
                         title = ?, organization = ?, description = ?,
                         program_type = ?, stem_fields = ?, eligibility = ?,
                         deadline = ?, start_date = ?, end_date = ?,
                         stipend = ?, location = ?, remote = ?, url = ?,
-                        is_active = ?, updated_at = ?
+                        is_active = ?, sector = COALESCE(?, sector), updated_at = ?
                     WHERE slug = ?
                 """, (
                     prog["title"], prog["organization"], prog["description"],
                     prog["program_type"], prog["stem_fields"], prog["eligibility"],
                     prog["deadline"], prog["start_date"], prog["end_date"],
                     prog["stipend"], prog["location"], prog["remote"], prog["url"],
-                    prog["is_active"], now,
+                    prog["is_active"], prog_sector, now,
                     prog["slug"]
                 ))
                 updated += 1
@@ -223,14 +257,14 @@ def upsert_programs(programs: list, db_path: Path) -> dict:
                     INSERT INTO cdp_programs
                         (slug, title, organization, description, program_type,
                          stem_fields, eligibility, deadline, start_date, end_date,
-                         stipend, location, remote, url, is_active, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         stipend, location, remote, url, is_active, sector, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     prog["slug"], prog["title"], prog["organization"], prog["description"],
                     prog["program_type"], prog["stem_fields"], prog["eligibility"],
                     prog["deadline"], prog["start_date"], prog["end_date"],
                     prog["stipend"], prog["location"], prog["remote"], prog["url"],
-                    prog["is_active"], now, now
+                    prog["is_active"], prog_sector, now, now
                 ))
                 inserted += 1
 
@@ -299,7 +333,13 @@ def main():
         log.error(f"Database not found: {db_path}")
         sys.exit(1)
 
-    stats = upsert_programs(programs, db_path)
+    # Infer sector from input filename if possible
+    input_stem = input_file.stem  # e.g. "01-doe-national-labs"
+    sector = FILENAME_TO_SECTOR.get(input_stem)
+    if sector:
+        log.info(f"Sector from filename: {sector}")
+
+    stats = upsert_programs(programs, db_path, sector=sector)
     log.info(f"Upsert complete: {stats}")
     print(json.dumps(stats))
 
