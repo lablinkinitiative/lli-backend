@@ -176,4 +176,77 @@ router.post('/students/me/gap-analyses', authMiddleware, [
   res.status(201).json(analysis);
 });
 
+// ── GET /students/me/full-data ──────────────────────────────
+// Returns the full rich StudentData blob (localStorage-compatible format)
+
+router.get('/students/me/full-data', authMiddleware, (req, res) => {
+  const student = db.prepare(
+    'SELECT uid, email, first_name, last_name, school, graduation_year, major, bio, linkedin_url, student_data_json, created_at FROM cdp_students WHERE uid = ?'
+  ).get(req.student.uid);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+
+  // Parse stored JSON blob
+  let stored = {};
+  try { stored = student.student_data_json ? JSON.parse(student.student_data_json) : {}; } catch {}
+
+  // Merge base profile fields with stored blob
+  const result = {
+    profile: {
+      firstName: student.first_name || '',
+      lastName: student.last_name || '',
+      school: student.school || '',
+      year: stored.profile?.year || '',
+      major: student.major || '',
+      gradYear: stored.profile?.gradYear || String(student.graduation_year || ''),
+      email: student.email,
+      createdAt: stored.profile?.createdAt || student.created_at,
+      updatedAt: stored.profile?.updatedAt || student.created_at,
+    },
+    interests: stored.interests || [],
+    skills: stored.skills || [],
+    goals: stored.goals || [],
+    targetTimeline: stored.targetTimeline || '',
+    gpa: stored.gpa || null,
+    experienceLevel: stored.experienceLevel || '',
+    profileCompleteness: stored.profileCompleteness || 0,
+    savedPrograms: stored.savedPrograms || [],
+    gapAnalyses: stored.gapAnalyses || [],
+    resumeUploaded: stored.resumeUploaded || false,
+  };
+
+  res.json(result);
+});
+
+// ── PUT /students/me/full-data ──────────────────────────────
+// Saves the full StudentData blob
+
+router.put('/students/me/full-data', authMiddleware, (req, res) => {
+  const student = db.prepare('SELECT id FROM cdp_students WHERE uid = ?').get(req.student.uid);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+
+  const data = req.body;
+  const json = JSON.stringify(data);
+
+  // Also update top-level columns from profile
+  db.prepare(`
+    UPDATE cdp_students SET
+      first_name      = COALESCE(?, first_name),
+      last_name       = COALESCE(?, last_name),
+      school          = COALESCE(?, school),
+      major           = COALESCE(?, major),
+      student_data_json = ?,
+      updated_at      = datetime('now')
+    WHERE uid = ?
+  `).run(
+    data.profile?.firstName || null,
+    data.profile?.lastName || null,
+    data.profile?.school || null,
+    data.profile?.major || null,
+    json,
+    req.student.uid
+  );
+
+  res.json({ saved: true });
+});
+
 module.exports = router;
