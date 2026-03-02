@@ -17,35 +17,37 @@ app.use(cors({
     // Allow localhost for dev
     /^http:\/\/localhost(:\d+)?$/
   ],
-  methods: ['GET', 'POST', 'PATCH', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 app.use(express.json());
 
-// Routes
-app.use('/api/labs',         require('./routes/labs'));
-app.use('/api/equipment',    require('./routes/equipment'));
-app.use('/api/bookings',     require('./routes/bookings'));
-app.use('/api/waitlist',     require('./routes/waitlist'));
-app.use('/api/labs',         require('./routes/experiments'));   // /api/labs/:slug/experiments
-app.use('/api/reagents',     require('./routes/reagents'));
-app.use('/api/calibrations', require('./routes/calibrations'));
+// CDP Routes
+app.use('/api/cdp', require('./routes/cdp-auth'));
+app.use('/api/cdp', require('./routes/cdp-students'));
 
 // Health check
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    service: 'LabLink Initiative Backend API',
-    version: '1.0.0',
+    service: 'LabLink Initiative CDP API',
+    version: '2.0.0',
     timestamp: new Date().toISOString(),
     endpoints: {
-      labs:         '/api/labs',
-      equipment:    '/api/equipment',
-      bookings:     '/api/bookings',
-      waitlist:     '/api/waitlist',
-      experiments:  '/api/labs/:slug/experiments',
-      reagents:     '/api/reagents',
-      calibrations: '/api/calibrations'
+      auth: {
+        register: 'POST /api/cdp/auth/register',
+        login:    'POST /api/cdp/auth/login',
+        me:       'GET  /api/cdp/auth/me'
+      },
+      students: {
+        profile:       'GET|PUT /api/cdp/students/me/profile',
+        savedPrograms: 'GET|POST|DELETE /api/cdp/students/me/saved-programs',
+        gapAnalyses:   'GET|POST /api/cdp/students/me/gap-analyses'
+      },
+      programs: {
+        list:   'GET /api/cdp/programs',
+        detail: 'GET /api/cdp/programs/:slug'
+      }
     }
   });
 });
@@ -53,8 +55,8 @@ app.get('/health', (req, res) => {
 // Root info
 app.get('/', (req, res) => {
   res.json({
-    name: 'LabLink Initiative Backend API',
-    version: '1.0.0',
+    name: 'LabLink Initiative CDP API',
+    version: '2.0.0',
     docs: 'https://github.com/lablinkinitiative/lli-backend',
     health: '/health'
   });
