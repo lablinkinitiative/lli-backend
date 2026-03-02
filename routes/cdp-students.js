@@ -226,7 +226,16 @@ let _slugSectorMap = null;
 
 router.get('/intern/opportunities', (req, res) => {
   if (!_slugSectorMap) _slugSectorMap = buildSlugSectorMap();
-  const programs = db.prepare('SELECT * FROM cdp_programs WHERE is_active = 1 ORDER BY created_at DESC').all();
+  const allPrograms = db.prepare('SELECT * FROM cdp_programs WHERE is_active = 1 ORDER BY created_at DESC').all();
+
+  // Filter out programs where deadline has already passed
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const programs = allPrograms.filter(p => {
+    if (!p.deadline) return true; // No deadline = always show (rolling)
+    const d = new Date(p.deadline);
+    return isNaN(d.getTime()) || d >= today;
+  });
 
   const opportunities = programs.map(p => {
     const sector = _slugSectorMap[p.slug] || inferSector(p.slug, p.program_type);
