@@ -76,17 +76,31 @@ else
     UPSERT_STATS='{}'
 fi
 
-# Step 3: Post to Slack
+# Step 3: Sync programs to frontend sites (CDP app + intern site use API now)
+if [ -z "$SKIP_UPSERT" ]; then
+    echo ""
+    echo "STEP 3: Syncing programs to CDP app..."
+    # Restart API to bust sector map cache, then rebuild CDP app
+    sudo systemctl restart lablink-api.service 2>/dev/null || true
+    sleep 3
+    if [ -f "$HOME/scripts/sync-cdp-programs.sh" ]; then
+        bash "$HOME/scripts/sync-cdp-programs.sh" 2>&1 | tee -a "$LOG_FILE" || echo "CDP sync failed (non-fatal)"
+    fi
+else
+    echo "STEP 3: Skipped (upsert skipped)"
+fi
+
+# Step 4: Post to Slack
 if [ -z "$SKIP_SLACK" ]; then
     echo ""
-    echo "STEP 3: Posting results to Slack..."
+    echo "STEP 4: Posting results to Slack..."
 
     python3 "$PIPELINE_DIR/notify.py" \
         --summary "$SUMMARY" \
         --upsert-stats "$UPSERT_STATS" \
         --log-file "$LOG_FILE" 2>&1 | tee -a "$LOG_FILE"
 else
-    echo "STEP 3: Skipped (--skip-slack)"
+    echo "STEP 4: Skipped (--skip-slack)"
 fi
 
 echo ""
