@@ -1,0 +1,19 @@
+[Unit]
+Description=LabLink Initiative Backend API
+After=network.target
+
+[Service]
+Type=simple
+User=agent
+WorkingDirectory=/home/agent/repos/lli-backend
+Environment=PORT=3001
+Environment=DB_PATH=/home/agent/data/lablink.db
+ExecStart=/usr/bin/node /home/agent/repos/lli-backend/server.js
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=lablink-api
+
+[Install]
+WantedBy=multi-user.target
