@@ -86,7 +86,11 @@ deploy_data = {
     "name": PROJECT_NAME,
     "files": files,
     "projectSettings": {"framework": "vite", "outputDirectory": "dist"},
-    "target": "production"
+    "target": "production",
+    "routes": [
+        {"handle": "filesystem"},
+        {"src": "/(.*)", "dest": "/index.html"}
+    ]
 }
 
 req = urllib.request.Request(
