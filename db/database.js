@@ -21,6 +21,7 @@ const migrations = [
   "ALTER TABLE cdp_students ADD COLUMN student_data_json TEXT",
   "ALTER TABLE cdp_programs ADD COLUMN sector TEXT",
   "ALTER TABLE cdp_programs ADD COLUMN categories TEXT",
+  "ALTER TABLE cdp_students ADD COLUMN google_id TEXT",
 ];
 for (const sql of migrations) {
   try { db.prepare(sql).run(); } catch { /* column may already exist */ }

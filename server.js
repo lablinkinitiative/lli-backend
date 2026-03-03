@@ -24,6 +24,7 @@ app.use(express.json());
 
 // CDP Routes
 app.use('/api/cdp', require('./routes/cdp-auth'));
+app.use('/api/cdp', require('./routes/cdp-oauth'));
 app.use('/api/cdp', require('./routes/cdp-students'));
 
 // Health check
