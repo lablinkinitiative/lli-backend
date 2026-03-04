@@ -75,8 +75,12 @@ app.get('/health', (req, res) => {
         gapAnalyses:   'GET|POST /api/cdp/students/me/gap-analyses'
       },
       programs: {
-        list:   'GET /api/cdp/programs',
-        detail: 'GET /api/cdp/programs/:slug'
+        list:        'GET /api/cdp/programs',
+        list_params: '?q=&type=&field=&sector=&career_stage=&benefits=&has_stipend=&remote=&keywords=&page=&limit=',
+        detail:      'GET /api/cdp/programs/:slug',
+        tags_summary:'GET /api/cdp/programs/tags/summary',
+        intern:      'GET /api/cdp/intern/opportunities',
+        cdp_export:  'GET /api/cdp/export/cdp-format',
       }
     }
   });

@@ -44,7 +44,7 @@ mkdir -p "$PIPELINE_DIR/output"
 # Step 1: Run orchestrator (deploys agents in parallel)
 echo ""
 echo "STEP 1: Deploying sector agents..."
-ORCHESTRATOR_ARGS="--sectors $SECTORS --max-workers 5"
+ORCHESTRATOR_ARGS="--sectors $SECTORS --max-workers 2"
 if [ -n "$DRY_RUN" ]; then
     ORCHESTRATOR_ARGS="$ORCHESTRATOR_ARGS --dry-run"
 fi
@@ -76,10 +76,26 @@ else
     UPSERT_STATS='{}'
 fi
 
-# Step 3: Sync programs to frontend sites (CDP app + intern site use API now)
+# Step 3: Enrich new programs with AI tags
 if [ -z "$SKIP_UPSERT" ]; then
     echo ""
-    echo "STEP 3: Syncing programs to CDP app..."
+    echo "STEP 3: Enriching new programs with AI tags..."
+    # Only enrich programs added/updated this run (unenriched-only flag)
+    ENRICH_LOG="$PIPELINE_DIR/output/enrichment-$(date +%Y%m%d-%H%M%S).log"
+    python3 "$PIPELINE_DIR/enrich-tags.py" \
+        --unenriched-only --db "$DB_PATH" \
+        > "$ENRICH_LOG" 2>&1 &
+    ENRICH_PID=$!
+    echo "Enrichment running (PID $ENRICH_PID) in background, log: $ENRICH_LOG"
+    # Don't wait — enrichment runs async while sync proceeds
+else
+    echo "STEP 3: Skipped (upsert skipped)"
+fi
+
+# Step 4: Sync programs to frontend sites (CDP app + intern site use API now)
+if [ -z "$SKIP_UPSERT" ]; then
+    echo ""
+    echo "STEP 4: Syncing programs to CDP app..."
     # Restart API to bust sector map cache, then rebuild CDP app
     sudo systemctl restart lablink-api.service 2>/dev/null || true
     sleep 3
@@ -87,20 +103,20 @@ if [ -z "$SKIP_UPSERT" ]; then
         bash "$HOME/scripts/sync-cdp-programs.sh" 2>&1 | tee -a "$LOG_FILE" || echo "CDP sync failed (non-fatal)"
     fi
 else
-    echo "STEP 3: Skipped (upsert skipped)"
+    echo "STEP 4: Skipped (upsert skipped)"
 fi
 
-# Step 4: Post to Slack
+# Step 5: Post to Slack
 if [ -z "$SKIP_SLACK" ]; then
     echo ""
-    echo "STEP 4: Posting results to Slack..."
+    echo "STEP 5: Posting results to Slack..."
 
     python3 "$PIPELINE_DIR/notify.py" \
         --summary "$SUMMARY" \
         --upsert-stats "$UPSERT_STATS" \
         --log-file "$LOG_FILE" 2>&1 | tee -a "$LOG_FILE"
 else
-    echo "STEP 4: Skipped (--skip-slack)"
+    echo "STEP 5: Skipped (--skip-slack)"
 fi
 
 echo ""

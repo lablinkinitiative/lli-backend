@@ -57,19 +57,89 @@ router.put('/students/me/profile', authMiddleware, [
 });
 
 // ── GET /programs ───────────────────────────────────────────
+// Supports full-text search + tag-based filtering
+// Query params:
+//   q           — full-text search (title, org, description)
+//   type        — program_type filter (internship, fellowship, scholarship, research)
+//   field       — stem_field filter (biology, cs, engineering, ...)
+//   sector      — sector filter (doe_labs, federal_science, ...)
+//   career_stage— tag filter: undergraduate, graduate, high_school, phd, any
+//   benefits    — tag filter: stipend, housing, travel_funding, academic_credit
+//   has_stipend — "true" to only return programs with stipend
+//   remote      — "true" to only return remote programs
+//   duration    — tag filter: summer, year_round, semester
+//   focus_type  — tag filter: wet_lab, computational, clinical, field_research
+//   special     — tag filter: underrepresented_minorities, first_generation, women_in_stem
+//   keywords    — tag filter: paid, prestigious, beginner_friendly
+//   page        — page number (default 1)
+//   limit       — results per page (default 50, max 200)
+//   sort        — created_at (default), title, organization
 
 router.get('/programs', (req, res) => {
-  const { type, field, q } = req.query;
+  const {
+    type, field, q, sector,
+    career_stage, benefits, has_stipend, remote,
+    duration, focus_type, special, keywords,
+    page = '1', limit = '50', sort = 'created_at',
+  } = req.query;
+
+  const pageNum = Math.max(1, parseInt(page) || 1);
+  const limitNum = Math.min(200, Math.max(1, parseInt(limit) || 50));
+  const offset = (pageNum - 1) * limitNum;
+
   let sql = 'SELECT * FROM cdp_programs WHERE is_active = 1';
   const params = [];
 
+  // Basic filters
   if (type) { sql += ' AND program_type = ?'; params.push(type); }
-  if (field) { sql += ' AND stem_fields LIKE ?'; params.push(`%${field}%`); }
-  if (q) { sql += ' AND (title LIKE ? OR organization LIKE ? OR description LIKE ?)'; params.push(`%${q}%`, `%${q}%`, `%${q}%`); }
+  if (sector) { sql += ' AND sector = ?'; params.push(sector); }
+  if (remote === 'true') { sql += ' AND remote = 1'; }
+  if (has_stipend === 'true') { sql += " AND stipend IS NOT NULL AND stipend != '' AND stipend NOT LIKE '%unpaid%'"; }
 
-  sql += ' ORDER BY created_at DESC';
+  // Full-text search across title, org, description
+  if (q) {
+    sql += ' AND (title LIKE ? OR organization LIKE ? OR description LIKE ?)';
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+  }
+
+  // STEM field filter (matches JSON array)
+  if (field) { sql += ' AND stem_fields LIKE ?'; params.push(`%${field}%`); }
+
+  // Tag-based filters (JSON search in tags column)
+  if (career_stage) { sql += ' AND (tags LIKE ? OR eligibility LIKE ?)'; params.push(`%"${career_stage}"%`, `%${career_stage}%`); }
+  if (benefits) { sql += ' AND tags LIKE ?'; params.push(`%"${benefits}"%`); }
+  if (duration) { sql += ' AND tags LIKE ?'; params.push(`%"${duration}"%`); }
+  if (focus_type) { sql += ' AND tags LIKE ?'; params.push(`%"${focus_type}"%`); }
+  if (special) { sql += ' AND tags LIKE ?'; params.push(`%"${special}"%`); }
+  if (keywords) { sql += ' AND tags LIKE ?'; params.push(`%"${keywords}"%`); }
+
+  // Count total before pagination
+  const countSql = sql.replace('SELECT *', 'SELECT COUNT(*)');
+  const total = db.prepare(countSql).get(...params)['COUNT(*)'];
+
+  // Sort
+  const validSorts = { created_at: 'created_at DESC', title: 'title ASC', organization: 'organization ASC' };
+  sql += ` ORDER BY ${validSorts[sort] || 'created_at DESC'}`;
+  sql += ' LIMIT ? OFFSET ?';
+  params.push(limitNum, offset);
+
   const programs = db.prepare(sql).all(...params);
-  res.json({ programs, total: programs.length });
+
+  // Parse JSON fields for response
+  const enriched = programs.map(p => ({
+    ...p,
+    tags: p.tags ? (() => { try { return JSON.parse(p.tags); } catch { return null; } })() : null,
+    stem_fields: p.stem_fields ? (() => { try { return JSON.parse(p.stem_fields); } catch { return [p.stem_fields]; } })() : [],
+    categories: p.categories ? (() => { try { return JSON.parse(p.categories); } catch { return []; } })() : [],
+  }));
+
+  res.json({
+    programs: enriched,
+    total,
+    page: pageNum,
+    limit: limitNum,
+    pages: Math.ceil(total / limitNum),
+  });
 });
 
 // ── GET /programs/:slug ─────────────────────────────────────
@@ -77,7 +147,53 @@ router.get('/programs', (req, res) => {
 router.get('/programs/:slug', (req, res) => {
   const program = db.prepare('SELECT * FROM cdp_programs WHERE slug = ? AND is_active = 1').get(req.params.slug);
   if (!program) return res.status(404).json({ error: 'Program not found' });
-  res.json(program);
+  // Parse JSON fields
+  const p = { ...program };
+  if (p.tags) { try { p.tags = JSON.parse(p.tags); } catch { p.tags = null; } }
+  if (p.stem_fields) { try { p.stem_fields = JSON.parse(p.stem_fields); } catch {} }
+  if (p.categories) { try { p.categories = JSON.parse(p.categories); } catch {} }
+  if (p.eligibility) { try { p.eligibility = JSON.parse(p.eligibility); } catch {} }
+  res.json(p);
+});
+
+// ── GET /programs/tags/summary ──────────────────────────────
+// Returns aggregate tag values for filter UI
+
+router.get('/programs/tags/summary', (req, res) => {
+  const rows = db.prepare(
+    "SELECT tags FROM cdp_programs WHERE is_active = 1 AND tags IS NOT NULL AND tags != ''"
+  ).all();
+
+  const summary = {
+    career_stage: new Set(),
+    benefits: new Set(),
+    duration: new Set(),
+    location_type: new Set(),
+    focus_type: new Set(),
+    special_eligibility: new Set(),
+    keywords: new Set(),
+  };
+
+  for (const row of rows) {
+    try {
+      const tags = JSON.parse(row.tags);
+      for (const [key, values] of Object.entries(tags)) {
+        if (summary[key] && Array.isArray(values)) {
+          values.forEach(v => summary[key].add(v));
+        }
+      }
+    } catch {}
+  }
+
+  const result = {};
+  for (const [key, set] of Object.entries(summary)) {
+    result[key] = Array.from(set).sort();
+  }
+
+  const tagged = rows.length;
+  const total = db.prepare('SELECT COUNT(*) as c FROM cdp_programs WHERE is_active = 1').get().c;
+
+  res.json({ tags: result, tagged_programs: tagged, total_programs: total });
 });
 
 // ── GET /export/cdp-format ────────────────────────────────
@@ -150,6 +266,17 @@ router.get('/export/cdp-format', (req, res) => {
       ? (p.title.match(/\(([^)]+)\)$/) || ['', p.title.slice(0, 25)])[1] || p.title.slice(0, 25) + '…'
       : p.title;
 
+    // Parse AI-generated tags if available
+    let parsedTags = null;
+    try { parsedTags = p.tags ? JSON.parse(p.tags) : null; } catch (_) {}
+
+    // Derive duration from tags if available
+    const durationTerms = parsedTags?.duration || [];
+    const durationWeeks = durationTerms.includes('10_weeks') ? 10
+      : durationTerms.includes('12_weeks') ? 12
+      : durationTerms.includes('8_weeks') ? 8
+      : null;
+
     return {
       id: p.slug,
       name: p.title,
@@ -157,16 +284,16 @@ router.get('/export/cdp-format', (req, res) => {
       category,
       type: p.program_type || 'internship',
       eligibility: {
-        level: edLevels.length ? edLevels : ['Undergraduate'],
+        level: edLevels.length ? edLevels : (parsedTags?.career_stage?.map(s => s.charAt(0).toUpperCase() + s.slice(1)) || ['Undergraduate']),
         citizenship,
         gpa: eligObj.gpa_min || null,
         notes: eligObj.notes || '',
       },
-      duration: { weeks: null, terms: [] },
+      duration: { weeks: durationWeeks, terms: durationTerms },
       compensation: {
-        paid: isPaid,
+        paid: isPaid || (parsedTags?.keywords || []).includes('paid'),
         stipend: stipend || 'See program details',
-        housing: stipend && /housing/i.test(stipend) ? 'Housing may be provided' : undefined,
+        housing: (stipend && /housing/i.test(stipend)) || (parsedTags?.benefits || []).includes('housing') ? 'Housing may be provided' : undefined,
       },
       locations,
       researchAreas,
@@ -175,6 +302,8 @@ router.get('/export/cdp-format', (req, res) => {
       applicationPlatform: 'Direct',
       keyFacts: p.description ? [p.description.slice(0, 200) + (p.description.length > 200 ? '…' : '')] : [],
       lliBridgeNote: '',
+      tags: parsedTags,
+      sector: p.sector || sector,
     };
   });
 

@@ -80,7 +80,7 @@ Start your response with [ and end with ]. The response must be valid JSON.
             ],
             capture_output=True,
             text=True,
-            timeout=600,  # 10 minutes per sector
+            timeout=1200,  # 20 minutes per sector
             cwd=str(BASE_DIR),
             env=env
         )
@@ -107,7 +107,7 @@ Start your response with [ and end with ]. The response must be valid JSON.
         }
 
     except subprocess.TimeoutExpired:
-        log.error(f"[{sector_name}] TIMEOUT after 10 minutes")
+        log.error(f"[{sector_name}] TIMEOUT after 20 minutes")
         return {"sector": sector_name, "status": "timeout", "programs": []}
     except Exception as e:
         log.error(f"[{sector_name}] Exception: {e}")
