@@ -46,9 +46,11 @@ RESUME TEXT:
 
 async function extractTextFromPDF(buffer) {
   try {
-    const pdfParse = require('pdf-parse');
-    const data = await pdfParse(buffer);
-    return data.text || '';
+    const { PDFParse } = require('pdf-parse');
+    const parser = new PDFParse({ data: buffer });
+    const result = await parser.getText();
+    await parser.destroy();
+    return result.text || '';
   } catch (err) {
     throw new Error('Could not extract text from PDF. Try uploading a .txt version instead.');
   }
