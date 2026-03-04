@@ -55,6 +55,7 @@ app.use(express.json());
 app.use('/api/cdp', require('./routes/cdp-auth'));
 app.use('/api/cdp', require('./routes/cdp-oauth'));
 app.use('/api/cdp', require('./routes/cdp-students'));
+app.use('/api/cdp', require('./routes/cdp-resume'));
 
 // Health check
 app.get('/health', (req, res) => {
