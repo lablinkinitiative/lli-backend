@@ -47,7 +47,11 @@ CREATE TABLE IF NOT EXISTS cdp_programs (
   url             TEXT,
   is_active       INTEGER NOT NULL DEFAULT 1,
   created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
-  updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
+  updated_at      TEXT    NOT NULL DEFAULT (datetime('now')),
+  sector          TEXT,   -- sector key: doe_labs, federal_science, space_defense, biomedical, etc.
+  categories      TEXT,   -- JSON array of sector keys (cross-listed programs)
+  tags            TEXT,   -- JSON: AI-generated tags {career_stage, benefits, duration, location_type, focus_type, special_eligibility, keywords}
+  tags_enriched_at TEXT   -- ISO datetime of last tag enrichment
 );
 
 -- ============================================================
