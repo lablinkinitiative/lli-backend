@@ -140,9 +140,13 @@ async function runParseJob(jobId, studentUid, fileBuffer, mimeType, originalName
 
     // Merge parsed data into student profile
     const student = db.prepare('SELECT * FROM cdp_students WHERE uid = ?').get(studentUid);
-    if (student && student.student_data_json) {
+    if (student) {
       try {
-        const sd = JSON.parse(student.student_data_json);
+        // Initialize student_data_json if missing (account exists but no onboarding yet)
+        const sd = student.student_data_json ? JSON.parse(student.student_data_json) : {
+          profile: { firstName: student.first_name || '', lastName: student.last_name || '', email: student.email || '', school: student.school || '', year: '', major: student.major || '', gradYear: '', createdAt: student.created_at, updatedAt: new Date().toISOString() },
+          interests: [], skills: [], goals: [], targetTimeline: '', gpa: null, experienceLevel: '', profileCompleteness: 0, savedPrograms: [], gapAnalyses: [], resumeUploaded: false,
+        };
 
         if (parsed.skills && parsed.skills.length > 0) {
           const existing = sd.skills || [];
@@ -176,6 +180,18 @@ async function runParseJob(jobId, studentUid, fileBuffer, mimeType, originalName
         if (sd.gpa) score += 5;
         if (sd.resumeUploaded) score += 5;
         sd.profileCompleteness = Math.min(100, score);
+
+        // Update both student_data_json AND top-level DB columns (used by full-data API)
+        const colUpdates = {};
+        if (parsed.school && !student.school) colUpdates.school = parsed.school;
+        if (parsed.major && !student.major) colUpdates.major = parsed.major;
+        if (parsed.gradYear && !student.graduation_year) colUpdates.graduation_year = parseInt(parsed.gradYear) || null;
+
+        if (Object.keys(colUpdates).length > 0) {
+          const sets = Object.keys(colUpdates).map(k => `${k} = ?`).join(', ');
+          db.prepare(`UPDATE cdp_students SET ${sets}, updated_at = datetime('now') WHERE uid = ?`)
+            .run(...Object.values(colUpdates), studentUid);
+        }
 
         db.prepare(`UPDATE cdp_students SET student_data_json = ?, updated_at = datetime('now') WHERE uid = ?`)
           .run(JSON.stringify(sd), studentUid);
