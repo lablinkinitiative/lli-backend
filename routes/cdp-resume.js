@@ -206,11 +206,13 @@ function isSameExperience(a, b) {
 }
 
 function mergeStudentData(sd, parsed, resumeId) {
-  // Skills: additive union across resumes
+  // Skills: additive union across resumes (case-insensitive dedup, preserve original casing)
   if (parsed.skills && parsed.skills.length > 0) {
-    const existing = new Set(sd.skills || []);
-    for (const s of parsed.skills) existing.add(s);
-    sd.skills = Array.from(existing);
+    const existingLower = new Map((sd.skills || []).map(s => [s.toLowerCase(), s]));
+    for (const s of parsed.skills) {
+      if (!existingLower.has(s.toLowerCase())) existingLower.set(s.toLowerCase(), s);
+    }
+    sd.skills = Array.from(existingLower.values());
   }
 
   // GPA: only set if not already present

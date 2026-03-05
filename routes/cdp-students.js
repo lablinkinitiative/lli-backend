@@ -96,10 +96,11 @@ router.get('/programs', (req, res) => {
   if (remote === 'true') { sql += ' AND remote = 1'; }
   if (has_stipend === 'true') { sql += " AND stipend IS NOT NULL AND stipend != '' AND stipend NOT LIKE '%unpaid%'"; }
 
-  // Full-text search across title, org, description
+  // Full-text search across title, org, description (escape LIKE wildcards)
   if (q) {
-    sql += ' AND (title LIKE ? OR organization LIKE ? OR description LIKE ?)';
-    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
+    const qEsc = q.replace(/[%_\\]/g, '\\$&');
+    sql += " AND (title LIKE ? ESCAPE '\\' OR organization LIKE ? ESCAPE '\\' OR description LIKE ? ESCAPE '\\')";
+    params.push(`%${qEsc}%`, `%${qEsc}%`, `%${qEsc}%`);
   }
 
   // STEM field filter (matches JSON array)
