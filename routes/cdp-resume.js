@@ -55,15 +55,41 @@ Return exactly this structure (use null for missing fields, empty array [] for m
   "name": "First Last",
   "email": "email@example.com or null",
   "gpa": "3.XX or null",
-  "school": "University name or null",
+  "school": "Most recent or primary university name or null",
   "major": "Field of study or null",
-  "year": "one of: Freshman, Sophomore, Junior, Senior, Graduate, PhD, Community College, Other — infer from context, or null",
-  "gradYear": "4-digit year like 2026 or null",
-  "skills": ["Python", "MATLAB", "etc — technical and professional skills only"],
-  "experience": [{"title": "Job Title", "org": "Organization", "duration": "Date range"}]
+  "year": "one of: Freshman, Sophomore, Junior, Senior, Graduate, PhD, Community College, Other — infer from graduation year and degree level, or null",
+  "gradYear": "4-digit expected graduation year or null",
+  "skills": ["Python", "MATLAB", "etc — technical and professional skills only, extracted from Skills section and throughout resume"],
+  "experience": [
+    {
+      "id": "8-char random hex like a1b2c3d4",
+      "type": "work|research|education|leadership|volunteer|other",
+      "title": "Job Title or Degree (e.g. B.S. Materials Science)",
+      "org": "Organization or University name",
+      "duration": "Month Year – Month Year (e.g. May 2023 – Aug 2023, or Aug 2024 – Present)",
+      "startDate": "YYYY-MM (e.g. 2023-05)",
+      "endDate": "YYYY-MM or null if current/ongoing",
+      "description": "1-2 sentence summary of key responsibilities and achievements",
+      "skills": ["specific tools/techniques used in this role"]
+    }
+  ]
 }
 
-For "year", infer from graduation year, degree level, or explicit mentions. Skills should map to technical tools, programming languages, lab techniques, and professional competencies.
+Type guide:
+- "work" = internship, job, industry employment
+- "research" = research assistant, lab researcher, academic/computational research
+- "education" = degree program (B.S., M.S., Ph.D., A.A.)
+- "leadership" = club officer, co-founder, board member, nonprofit leadership
+- "volunteer" = volunteer, community service
+- "other" = anything else
+
+IMPORTANT:
+- Include BOTH work/research experience AND education entries in the experience array
+- Sort experience by startDate descending (most recent first)
+- Generate a unique 8-character hex id for each entry
+- Use null endDate for current/ongoing positions
+- For "Present" or ongoing roles, set endDate to null
+- Extract month as 2-digit (01-12). If only year is given, use 01 for January
 
 RESUME TEXT:
 `;
@@ -162,6 +188,20 @@ async function runParseJob(jobId, studentUid, fileBuffer, mimeType, originalName
         if (parsed.year && !sd.profile.year) sd.profile.year = parsed.year;
         if (parsed.gradYear && !sd.profile.gradYear) sd.profile.gradYear = String(parsed.gradYear);
 
+        // Merge experience timeline — replace if resume has richer data
+        if (parsed.experience && parsed.experience.length > 0) {
+          const existing = sd.experience || [];
+          // Deduplicate by title+org combo; parsed entries take precedence
+          const existingKeys = new Set(existing.map(e => `${e.title}||${e.org}`));
+          const newEntries = parsed.experience.filter(e => !existingKeys.has(`${e.title}||${e.org}`));
+          // Merge: keep existing manual entries, add new parsed ones
+          sd.experience = [...existing, ...newEntries].sort((a, b) => {
+            const da = a.startDate || '0000-00';
+            const db2 = b.startDate || '0000-00';
+            return db2.localeCompare(da); // descending
+          });
+        }
+
         sd.resumeUploaded = true;
         sd.resumeFileName = originalName;
         sd.resumeParsedAt = new Date().toISOString();
@@ -174,11 +214,12 @@ async function runParseJob(jobId, studentUid, fileBuffer, mimeType, originalName
         if (sd.profile.year) score += 10;
         if (sd.profile.major) score += 10;
         if (sd.interests && sd.interests.length > 0) score += 15;
-        if (sd.skills && sd.skills.length > 0) score += 15;
+        if (sd.skills && sd.skills.length > 0) score += 10;
         if (sd.goals && sd.goals.length > 0) score += 10;
         if (sd.targetTimeline) score += 5;
         if (sd.gpa) score += 5;
         if (sd.resumeUploaded) score += 5;
+        if (sd.experience && sd.experience.length > 0) score += 5;
         sd.profileCompleteness = Math.min(100, score);
 
         // Update both student_data_json AND top-level DB columns (used by full-data API)

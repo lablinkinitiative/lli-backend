@@ -721,6 +721,7 @@ router.get('/students/me/full-data', authMiddleware, (req, res) => {
     savedPrograms: stored.savedPrograms || [],
     gapAnalyses: stored.gapAnalyses || [],
     resumeUploaded: stored.resumeUploaded || false,
+    experience: stored.experience || [],
   };
 
   res.json(result);
