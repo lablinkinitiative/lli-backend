@@ -478,7 +478,7 @@ Return ONLY a valid JSON object (no markdown):
     for (const [tier, result] of Object.entries(tiers)) {
       if (!result) continue;
 
-      const pathwayId = result.pathway_id || result.pathway_id;
+      const pathwayId = result.pathway_id || result.id;
       const id = uuidv4();
 
       db.prepare(`
