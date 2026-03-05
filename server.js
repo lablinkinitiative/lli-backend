@@ -60,6 +60,7 @@ app.use('/api/cdp', require('./routes/cdp-oauth'));
 app.use('/api/cdp', require('./routes/cdp-students'));
 app.use('/api/cdp', require('./routes/cdp-resume'));
 app.use('/api/cdp', require('./routes/cdp-gap-analysis'));
+app.use('/api/cdp', require('./routes/cdp-pathways'));
 
 // Health check
 app.get('/health', (req, res) => {
