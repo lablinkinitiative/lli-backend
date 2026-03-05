@@ -167,6 +167,44 @@ function sanitizeFilename(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.\.+/g, '_');
 }
 
+// Normalize a string for fuzzy comparison: lowercase, remove hyphens/parens/punctuation
+function normalizeStr(s) {
+  if (!s) return '';
+  return s.toLowerCase()
+    .replace(/\([^)]*\)/g, '')        // remove parenthetical content e.g. "(DOE)", "(Nonprofit)"
+    .replace(/[-–—]/g, ' ')           // dashes to spaces
+    .replace(/[,.\/#!$%^&*;:{}=_`~]/g, '') // remove punctuation
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// First N words of normalized string (for org prefix matching)
+function orgPrefix(s, n = 3) {
+  return normalizeStr(s).split(/\s+/).slice(0, n).join(' ');
+}
+
+// True if two experience entries represent the same position
+function isSameExperience(a, b) {
+  const titleA = normalizeStr(a.title);
+  const titleB = normalizeStr(b.title);
+  const orgA = normalizeStr(a.org);
+  const orgB = normalizeStr(b.org);
+
+  // Exact normalized match on both
+  if (titleA === titleB && orgA === orgB) return true;
+
+  // Same dates + title matches → same role (org might be abbreviated differently)
+  if (a.startDate && b.startDate && a.startDate === b.startDate && a.endDate === b.endDate) {
+    if (titleA === titleB) return true;
+    // Org prefix match: first 3 words are same (catches "Air Force Research Lab WPAFB" vs "Air Force Research Lab Wright-Patterson")
+    if (orgA && orgB && orgPrefix(a.org) === orgPrefix(b.org)) return true;
+    // One org string contains the other (catches "Idaho National Laboratory" vs "Idaho National Laboratory (DOE)")
+    if (orgA && orgB && (orgA.includes(orgB) || orgB.includes(orgA))) return true;
+  }
+
+  return false;
+}
+
 function mergeStudentData(sd, parsed, resumeId) {
   // Skills: additive union across resumes
   if (parsed.skills && parsed.skills.length > 0) {
@@ -187,12 +225,11 @@ function mergeStudentData(sd, parsed, resumeId) {
   if (parsed.year && !sd.profile.year) sd.profile.year = parsed.year;
   if (parsed.gradYear && !sd.profile.gradYear) sd.profile.gradYear = String(parsed.gradYear);
 
-  // Experience: deduplicate by title+org, tag with resumeId, keep both
+  // Experience: deduplicate with fuzzy matching to handle minor wording differences
   if (parsed.experience && parsed.experience.length > 0) {
     const existing = sd.experience || [];
-    const existingKeys = new Set(existing.map(e => `${(e.title || '').toLowerCase()}||${(e.org || '').toLowerCase()}`));
     const tagged = parsed.experience.map(e => ({ ...e, resumeId: resumeId || undefined }));
-    const newEntries = tagged.filter(e => !existingKeys.has(`${(e.title || '').toLowerCase()}||${(e.org || '').toLowerCase()}`));
+    const newEntries = tagged.filter(e => !existing.some(ex => isSameExperience(ex, e)));
     sd.experience = [...existing, ...newEntries].sort((a, b) => {
       return (b.startDate || '0000-00').localeCompare(a.startDate || '0000-00');
     });
