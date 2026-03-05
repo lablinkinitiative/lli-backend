@@ -118,10 +118,12 @@ RESUME TEXT:
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 async function extractTextFromPDF(buffer) {
-  const pdfParse = require('pdf-parse');
-  const data = await pdfParse(buffer);
-  if (!data.text) throw new Error('No text extracted from PDF');
-  return data.text;
+  const { PDFParse } = require('pdf-parse');
+  const parser = new PDFParse({ data: buffer });
+  const result = await parser.getText();
+  await parser.destroy();
+  if (!result.text) throw new Error('No text extracted from PDF');
+  return result.text;
 }
 
 function spawnClaude(prompt, timeoutMs = 90000) {
