@@ -461,7 +461,10 @@ router.get('/resumes/:id/download', authMiddleware, (req, res) => {
   if (!resume) return res.status(404).json({ error: 'Resume not found' });
   if (!fs.existsSync(resume.file_path)) return res.status(404).json({ error: 'File not found on server' });
 
-  res.setHeader('Content-Disposition', `attachment; filename="${resume.original_name}"`);
+  // Sanitize filename: strip control chars and quotes to prevent header injection
+  const safeFilename = resume.original_name.replace(/[\x00-\x1f\x7f"\\]/g, '_');
+  const encodedFilename = encodeURIComponent(safeFilename);
+  res.setHeader('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`);
   res.setHeader('Content-Type', resume.mime_type || 'application/octet-stream');
   res.sendFile(resume.file_path);
 });

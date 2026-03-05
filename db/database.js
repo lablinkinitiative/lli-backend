@@ -22,6 +22,14 @@ const migrations = [
   "ALTER TABLE cdp_programs ADD COLUMN sector TEXT",
   "ALTER TABLE cdp_programs ADD COLUMN categories TEXT",
   "ALTER TABLE cdp_students ADD COLUMN google_id TEXT",
+  // Indexes for frequently queried columns
+  "CREATE INDEX IF NOT EXISTS idx_cdp_students_uid ON cdp_students(uid)",
+  "CREATE INDEX IF NOT EXISTS idx_cdp_students_email ON cdp_students(email)",
+  "CREATE INDEX IF NOT EXISTS idx_cdp_programs_slug ON cdp_programs(slug)",
+  "CREATE INDEX IF NOT EXISTS idx_cdp_programs_sector ON cdp_programs(sector)",
+  "CREATE INDEX IF NOT EXISTS idx_cdp_programs_active ON cdp_programs(is_active)",
+  "CREATE INDEX IF NOT EXISTS idx_cdp_saved_student ON cdp_saved_programs(student_id)",
+  "CREATE INDEX IF NOT EXISTS idx_cdp_gap_student ON cdp_gap_analyses(student_id)",
 ];
 for (const sql of migrations) {
   try { db.prepare(sql).run(); } catch { /* column may already exist */ }

@@ -107,9 +107,14 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Endpoint not found' });
 });
 
+// Startup: warn loudly if JWT secret is using insecure dev fallback
+if (!process.env.CDP_JWT_SECRET) {
+  console.warn('[lablink-api] WARNING: CDP_JWT_SECRET not set — using insecure dev fallback. Set this in systemd service env!');
+}
+
 // Error handler
 app.use((err, req, res, next) => {
-  console.error('[ERROR]', err.message);
+  console.error('[ERROR]', err.stack || err.message);
   res.status(500).json({ error: 'Internal server error' });
 });
 

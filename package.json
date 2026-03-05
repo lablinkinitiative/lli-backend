@@ -5,7 +5,9 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "test": "node tests/test-cdp-full-v2.js",
+    "validate": "NODE_PATH=./node_modules node /home/agent/tests/cdp-full-validation.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",

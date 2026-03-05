@@ -76,7 +76,15 @@ db.exec(`
 db.exec(`CREATE INDEX IF NOT EXISTS idx_pp_pathway ON cdp_pathway_programs(pathway_id)`);
 
 // Job tracking (in-memory; jobs are fast enough)
-const generationJobs = new Map(); // jobId → {status, pathways, error}
+const generationJobs = new Map(); // jobId → {status, pathways, error, createdAt}
+
+// Cleanup jobs older than 1 hour every 30 minutes to prevent memory leak
+setInterval(() => {
+  const cutoff = Date.now() - 60 * 60 * 1000;
+  for (const [id, job] of generationJobs) {
+    if (job.createdAt < cutoff) generationJobs.delete(id);
+  }
+}, 30 * 60 * 1000).unref();
 
 // ─── Claude helpers ───────────────────────────────────────────────────────────
 
@@ -788,7 +796,7 @@ router.post('/students/me/pathways/generate', authMiddleware, async (req, res) =
   }
 
   const jobId = uuidv4();
-  generationJobs.set(jobId, { status: 'pending', pathways: null, error: null });
+  generationJobs.set(jobId, { status: 'pending', pathways: null, error: null, createdAt: Date.now() });
 
   // Run async
   setImmediate(() => runGeneration(jobId, req.student.uid, sd).catch(e => {

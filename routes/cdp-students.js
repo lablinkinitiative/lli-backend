@@ -632,8 +632,9 @@ router.delete('/students/me/saved-programs/:programId', authMiddleware, (req, re
   const student = db.prepare('SELECT id FROM cdp_students WHERE uid = ?').get(req.student.uid);
   if (!student) return res.status(404).json({ error: 'Student not found' });
 
-  db.prepare('DELETE FROM cdp_saved_programs WHERE student_id = ? AND program_id = ?')
+  const result = db.prepare('DELETE FROM cdp_saved_programs WHERE student_id = ? AND program_id = ?')
     .run(student.id, req.params.programId);
+  if (result.changes === 0) return res.status(404).json({ error: 'Program not in saved list' });
   res.json({ message: 'Removed from saved programs' });
 });
 
@@ -786,6 +787,7 @@ router.delete('/students/me', authMiddleware, (req, res) => {
   db.prepare('DELETE FROM resume_parse_jobs WHERE student_uid = ?').run(uid);
   db.prepare('DELETE FROM cdp_student_pathways WHERE student_uid = ?').run(uid);
   db.prepare('DELETE FROM cdp_gap_analyses WHERE student_id = ?').run(studentId);
+  db.prepare('DELETE FROM cdp_gap_analyses_v2 WHERE student_uid = ?').run(uid);
   db.prepare('DELETE FROM cdp_saved_programs WHERE student_id = ?').run(studentId);
   db.prepare('DELETE FROM cdp_students WHERE uid = ?').run(uid);
 
