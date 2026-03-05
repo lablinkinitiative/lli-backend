@@ -710,7 +710,7 @@ router.post('/pathways/score', authMiddleware, async (req, res) => {
     return res.status(400).json({ error: 'pathway_ids must be a non-empty array' });
   }
 
-  const student = db.prepare('SELECT * FROM cdp_students WHERE uid=?').get(req.user.uid);
+  const student = db.prepare('SELECT * FROM cdp_students WHERE uid=?').get(req.student.uid);
   if (!student) return res.status(404).json({ error: 'Student not found' });
   const sd = parseStudentData(student);
 
@@ -738,7 +738,7 @@ router.get('/students/me/pathways', authMiddleware, (req, res) => {
     JOIN cdp_pathways p ON p.id=sp.pathway_id
     WHERE sp.student_uid=?
     ORDER BY CASE sp.fit_tier WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'stretch' THEN 3 ELSE 4 END
-  `).all(req.user.uid);
+  `).all(req.student.uid);
 
   const result = assignments.map(a => {
     // Get gap analysis status if linked
@@ -773,7 +773,7 @@ router.get('/students/me/pathways', authMiddleware, (req, res) => {
 
 // POST /api/cdp/students/me/pathways/generate — trigger 3-pathway generation
 router.post('/students/me/pathways/generate', authMiddleware, async (req, res) => {
-  const student = db.prepare('SELECT * FROM cdp_students WHERE uid=?').get(req.user.uid);
+  const student = db.prepare('SELECT * FROM cdp_students WHERE uid=?').get(req.student.uid);
   if (!student) return res.status(404).json({ error: 'Student not found' });
 
   const sd = parseStudentData(student);
@@ -791,7 +791,7 @@ router.post('/students/me/pathways/generate', authMiddleware, async (req, res) =
   generationJobs.set(jobId, { status: 'pending', pathways: null, error: null });
 
   // Run async
-  setImmediate(() => runGeneration(jobId, req.user.uid, sd).catch(e => {
+  setImmediate(() => runGeneration(jobId, req.student.uid, sd).catch(e => {
     const job = generationJobs.get(jobId);
     if (job) { job.status = 'error'; job.error = e.message; }
   }));
