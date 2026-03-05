@@ -812,4 +812,91 @@ router.get('/students/me/pathways/status/:jobId', authMiddleware, (req, res) => 
   });
 });
 
+// POST /api/cdp/students/me/pathways/swap — manually swap a tier slot with a library pathway
+// Body: { tier: 'high'|'medium'|'stretch', pathway_id: string }
+// Students keep their 3 default slots; this replaces one slot's pathway with a chosen library entry.
+router.post('/students/me/pathways/swap', authMiddleware, async (req, res) => {
+  const { tier, pathway_id } = req.body || {};
+  const uid = req.student.uid;
+
+  if (!tier || !['high', 'medium', 'stretch'].includes(tier)) {
+    return res.status(400).json({ error: 'tier must be high, medium, or stretch' });
+  }
+  if (!pathway_id) {
+    return res.status(400).json({ error: 'pathway_id is required' });
+  }
+
+  const pathway = db.prepare('SELECT * FROM cdp_pathways WHERE id=?').get(pathway_id);
+  if (!pathway) return res.status(404).json({ error: 'Pathway not found' });
+
+  // Find existing assignment for this tier
+  const existing = db.prepare(
+    'SELECT * FROM cdp_student_pathways WHERE student_uid=? AND fit_tier=?'
+  ).get(uid, tier);
+
+  if (!existing) {
+    return res.status(400).json({
+      error: 'No existing pathway for this tier. Run /generate first.',
+    });
+  }
+
+  // Clear old gap analysis link and update pathway
+  db.prepare(`
+    UPDATE cdp_student_pathways
+    SET pathway_id=?, gap_analysis_id=NULL, notes='Manually selected', assigned_at=datetime('now')
+    WHERE id=?
+  `).run(pathway_id, existing.id);
+
+  // Increment usage count
+  db.prepare('UPDATE cdp_pathways SET usage_count=usage_count+1 WHERE id=?').run(pathway_id);
+
+  // Build pathway object for gap analysis
+  const pathwayForGap = {
+    id: pathway.id,
+    name: pathway.title,
+    shortName: pathway.short_name,
+    track: pathway.career_field,
+    description: pathway.description,
+    targetLevel: (pathway.entry_level || '').split(','),
+    timeToReady: null,
+    skills: (() => {
+      try {
+        const req = JSON.parse(pathway.requirements_json || '{}');
+        return (req.skills || []).map(s => ({ name: s, weight: 3, category: 'General' }));
+      } catch { return []; }
+    })(),
+  };
+
+  // Insert or replace gap analysis record
+  const gaId = uuidv4();
+  db.prepare(`
+    INSERT OR REPLACE INTO cdp_gap_analyses_v2
+      (id, student_uid, pathway_id, pathway_name, status, auto_generated, created_at, updated_at)
+    VALUES (?, ?, ?, ?, 'queued', 0, datetime('now'), datetime('now'))
+  `).run(gaId, uid, pathway_id, pathway.title);
+
+  // Link gap analysis to assignment
+  db.prepare('UPDATE cdp_student_pathways SET gap_analysis_id=? WHERE id=?').run(gaId, existing.id);
+
+  // Trigger gap analysis async using internal runner
+  setImmediate(() => {
+    triggerGapAnalysis(gaId, uid, pathwayForGap).catch(e =>
+      console.error('Swap gap analysis trigger failed:', e.message)
+    );
+  });
+
+  res.json({
+    ok: true,
+    message: `Tier "${tier}" swapped to "${pathway.title}"`,
+    assignment_id: existing.id,
+    gap_analysis_id: gaId,
+    pathway: {
+      id: pathway.id,
+      title: pathway.title,
+      short_name: pathway.short_name,
+      career_field: pathway.career_field,
+    },
+  });
+});
+
 module.exports = router;
