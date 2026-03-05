@@ -759,4 +759,36 @@ router.put('/students/me/full-data', authMiddleware, (req, res) => {
   res.json({ saved: true });
 });
 
+// ── DELETE /students/me ─────────────────────────────────────
+// Permanently deletes all data for the authenticated student account.
+
+router.delete('/students/me', authMiddleware, (req, res) => {
+  const uid = req.student.uid;
+
+  const student = db.prepare('SELECT id FROM cdp_students WHERE uid = ?').get(uid);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+
+  const studentId = student.id;
+
+  // Delete resume files from disk
+  const resumes = db.prepare('SELECT file_path FROM cdp_resumes WHERE student_uid = ?').all(uid);
+  const fs = require('fs');
+  for (const r of resumes) {
+    try { fs.unlinkSync(r.file_path); } catch { /* ignore missing files */ }
+  }
+  // Remove resume directory if empty
+  const resumeDir = `/home/agent/data/resumes/${uid}`;
+  try { fs.rmdirSync(resumeDir); } catch { /* ignore */ }
+
+  // Delete all student-owned records
+  db.prepare('DELETE FROM cdp_resumes WHERE student_uid = ?').run(uid);
+  db.prepare('DELETE FROM resume_parse_jobs WHERE student_uid = ?').run(uid);
+  db.prepare('DELETE FROM cdp_student_pathways WHERE student_uid = ?').run(uid);
+  db.prepare('DELETE FROM cdp_gap_analyses WHERE student_id = ?').run(studentId);
+  db.prepare('DELETE FROM cdp_saved_programs WHERE student_id = ?').run(studentId);
+  db.prepare('DELETE FROM cdp_students WHERE uid = ?').run(uid);
+
+  res.json({ deleted: true });
+});
+
 module.exports = router;
