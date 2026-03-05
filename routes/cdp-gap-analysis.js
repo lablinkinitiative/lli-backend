@@ -250,7 +250,25 @@ router.post('/gap-analysis/run', authMiddleware, (req, res) => {
   const { pathway_id, force } = req.body;
   if (!pathway_id) return res.status(400).json({ error: 'pathway_id required' });
 
-  const pathway = PATHWAYS.find(p => p.id === pathway_id);
+  // Look up from static list first, then fall back to cdp_pathways table (agent-generated)
+  let pathway = PATHWAYS.find(p => p.id === pathway_id);
+  if (!pathway) {
+    const dbPw = db.prepare('SELECT * FROM cdp_pathways WHERE id=?').get(pathway_id);
+    if (dbPw) {
+      const req_json = (() => { try { return JSON.parse(dbPw.requirements_json || '{}'); } catch { return {}; } })();
+      pathway = {
+        id: dbPw.id,
+        name: dbPw.title,
+        shortName: dbPw.short_name,
+        track: dbPw.career_field,
+        description: dbPw.description,
+        targetLevel: (dbPw.entry_level || '').split(','),
+        timeToReady: null,
+        skills: (req_json.skills || []).map(s => ({ name: s, weight: 3, category: 'General' })),
+        careerOutcomes: (() => { try { return JSON.parse(dbPw.outcomes_json || '{}'); } catch { return {}; } })(),
+      };
+    }
+  }
   if (!pathway) return res.status(404).json({ error: 'Pathway not found' });
 
   const studentUid = req.student.uid;
