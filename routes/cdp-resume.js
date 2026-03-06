@@ -116,6 +116,58 @@ IMPORTANT:
 RESUME TEXT:
 `;
 
+// ─── Agentic merge prompt ──────────────────────────────────────────────────────
+const MERGE_PROMPT_TEMPLATE = (existingJson, parsedJson) => `You are merging a student's career profile with data from a newly uploaded resume.
+
+TASK: Produce a single merged profile that is more complete and accurate than either input alone.
+
+RULES:
+1. DEDUPLICATE experience — same position at same org with overlapping dates = ONE entry. Handle fuzzy matches:
+   - Org abbreviations: "WPAFB" = "Wright-Patterson AFB", "INL" = "Idaho National Laboratory", "NIH" = "National Institutes of Health"
+   - Parenthetical notes are the same org: "Idaho National Laboratory" = "Idaho National Laboratory (DOE)"
+   - Same title + same org prefix + overlapping dates = same entry
+   - Different wording for same role: keep the more complete/descriptive version, or combine descriptions
+   - If genuinely ambiguous, keep both
+2. SKILLS — union of all skills, case-insensitive dedup (prefer capitalized form e.g. "Python" not "python")
+3. PROFILE FIELDS — prefer non-null, more complete values:
+   - school, major, year, gradYear: update if new value is more complete
+   - GPA: keep existing numeric gpa if set; adopt new value only if existing is null
+4. PRESERVE exactly from existing: interests, goals, targetTimeline, experienceLevel, savedPrograms, gapAnalyses
+5. SORT experience by startDate descending (most recent first)
+6. For merged experience entries, ensure each has a unique "id" (8-char hex)
+
+Return ONLY a valid JSON object — NO markdown, NO explanation, NO code fences. Just raw JSON matching this exact schema:
+{
+  "profile": {
+    "firstName": "...",
+    "lastName": "...",
+    "email": "...",
+    "school": "...",
+    "year": "...",
+    "major": "...",
+    "gradYear": "...",
+    "createdAt": "...",
+    "updatedAt": "<ISO timestamp of now>"
+  },
+  "skills": [...],
+  "experience": [...],
+  "interests": [...],
+  "goals": [...],
+  "gpa": <number or null>,
+  "targetTimeline": <string or null>,
+  "experienceLevel": <string or null>,
+  "savedPrograms": [...],
+  "gapAnalyses": [...],
+  "resumeUploaded": true
+}
+
+EXISTING STUDENT PROFILE:
+${JSON.stringify(existingJson, null, 2)}
+
+NEWLY PARSED RESUME DATA:
+${JSON.stringify(parsedJson, null, 2)}
+`;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 async function extractTextFromPDF(buffer) {
   const { PDFParse } = require('pdf-parse');
@@ -167,86 +219,14 @@ function sanitizeFilename(name) {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').replace(/\.\.+/g, '_');
 }
 
-// Normalize a string for fuzzy comparison: lowercase, remove hyphens/parens/punctuation
-function normalizeStr(s) {
-  if (!s) return '';
-  return s.toLowerCase()
-    .replace(/\([^)]*\)/g, '')        // remove parenthetical content e.g. "(DOE)", "(Nonprofit)"
-    .replace(/[-–—]/g, ' ')           // dashes to spaces
-    .replace(/[,.\/#!$%^&*;:{}=_`~]/g, '') // remove punctuation
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-// First N words of normalized string (for org prefix matching)
-function orgPrefix(s, n = 3) {
-  return normalizeStr(s).split(/\s+/).slice(0, n).join(' ');
-}
-
-// True if two experience entries represent the same position
-function isSameExperience(a, b) {
-  const titleA = normalizeStr(a.title);
-  const titleB = normalizeStr(b.title);
-  const orgA = normalizeStr(a.org);
-  const orgB = normalizeStr(b.org);
-
-  // Exact normalized match on both
-  if (titleA === titleB && orgA === orgB) return true;
-
-  // Same dates + title matches → same role (org might be abbreviated differently)
-  if (a.startDate && b.startDate && a.startDate === b.startDate && a.endDate === b.endDate) {
-    if (titleA === titleB) return true;
-    // Org prefix match: first 3 words are same (catches "Air Force Research Lab WPAFB" vs "Air Force Research Lab Wright-Patterson")
-    if (orgA && orgB && orgPrefix(a.org) === orgPrefix(b.org)) return true;
-    // One org string contains the other (catches "Idaho National Laboratory" vs "Idaho National Laboratory (DOE)")
-    if (orgA && orgB && (orgA.includes(orgB) || orgB.includes(orgA))) return true;
-  }
-
-  return false;
-}
-
-function mergeStudentData(sd, parsed, resumeId) {
-  // Skills: additive union across resumes (case-insensitive dedup, preserve original casing)
-  if (parsed.skills && parsed.skills.length > 0) {
-    const existingLower = new Map((sd.skills || []).map(s => [s.toLowerCase(), s]));
-    for (const s of parsed.skills) {
-      if (!existingLower.has(s.toLowerCase())) existingLower.set(s.toLowerCase(), s);
-    }
-    sd.skills = Array.from(existingLower.values());
-  }
-
-  // GPA: only set if not already present
-  if (parsed.gpa && !sd.gpa) {
-    const gpaNum = parseFloat(parsed.gpa);
-    if (!isNaN(gpaNum)) sd.gpa = gpaNum;
-  }
-
-  if (!sd.profile) sd.profile = {};
-  if (parsed.school && !sd.profile.school) sd.profile.school = parsed.school;
-  if (parsed.major && !sd.profile.major) sd.profile.major = parsed.major;
-  if (parsed.year && !sd.profile.year) sd.profile.year = parsed.year;
-  if (parsed.gradYear && !sd.profile.gradYear) sd.profile.gradYear = String(parsed.gradYear);
-
-  // Experience: deduplicate with fuzzy matching to handle minor wording differences
-  if (parsed.experience && parsed.experience.length > 0) {
-    const existing = sd.experience || [];
-    const tagged = parsed.experience.map(e => ({ ...e, resumeId: resumeId || undefined }));
-    const newEntries = tagged.filter(e => !existing.some(ex => isSameExperience(ex, e)));
-    sd.experience = [...existing, ...newEntries].sort((a, b) => {
-      return (b.startDate || '0000-00').localeCompare(a.startDate || '0000-00');
-    });
-  }
-
-  sd.resumeUploaded = true;
-  sd.profile.updatedAt = new Date().toISOString();
-
-  // Recompute completeness
+// ─── Completeness recompute (shared) ──────────────────────────────────────────
+function recomputeCompleteness(sd) {
   let score = 0;
-  if (sd.profile.firstName) score += 10;
-  if (sd.profile.lastName) score += 5;
-  if (sd.profile.school) score += 10;
-  if (sd.profile.year) score += 10;
-  if (sd.profile.major) score += 10;
+  if (sd.profile?.firstName) score += 10;
+  if (sd.profile?.lastName) score += 5;
+  if (sd.profile?.school) score += 10;
+  if (sd.profile?.year) score += 10;
+  if (sd.profile?.major) score += 10;
   if (sd.interests && sd.interests.length > 0) score += 15;
   if (sd.skills && sd.skills.length > 0) score += 10;
   if (sd.goals && sd.goals.length > 0) score += 10;
@@ -255,8 +235,53 @@ function mergeStudentData(sd, parsed, resumeId) {
   if (sd.resumeUploaded) score += 5;
   if (sd.experience && sd.experience.length > 0) score += 5;
   sd.profileCompleteness = Math.min(100, score);
-
   return sd;
+}
+
+// ─── Agentic merge — Claude reasons about what's new vs duplicate ──────────────
+async function mergeWithClaude(existingProfile, parsed) {
+  const prompt = MERGE_PROMPT_TEMPLATE(existingProfile, parsed);
+  const stdout = await spawnClaude(prompt, 120000);
+  const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) throw new Error('No JSON in Claude merge response');
+  const merged = JSON.parse(jsonMatch[0]);
+  // Always recompute completeness on the backend (don't trust Claude's number)
+  recomputeCompleteness(merged);
+  return merged;
+}
+
+// ─── Programmatic merge — fallback if agentic merge fails ─────────────────────
+function mergeStudentDataFallback(sd, parsed) {
+  if (parsed.skills && parsed.skills.length > 0) {
+    const existingLower = new Map((sd.skills || []).map(s => [s.toLowerCase(), s]));
+    for (const s of parsed.skills) {
+      if (!existingLower.has(s.toLowerCase())) existingLower.set(s.toLowerCase(), s);
+    }
+    sd.skills = Array.from(existingLower.values());
+  }
+  if (parsed.gpa && !sd.gpa) {
+    const gpaNum = parseFloat(parsed.gpa);
+    if (!isNaN(gpaNum)) sd.gpa = gpaNum;
+  }
+  if (!sd.profile) sd.profile = {};
+  if (parsed.school && !sd.profile.school) sd.profile.school = parsed.school;
+  if (parsed.major && !sd.profile.major) sd.profile.major = parsed.major;
+  if (parsed.year && !sd.profile.year) sd.profile.year = parsed.year;
+  if (parsed.gradYear && !sd.profile.gradYear) sd.profile.gradYear = String(parsed.gradYear);
+  if (parsed.experience && parsed.experience.length > 0) {
+    const existing = sd.experience || [];
+    const newEntries = parsed.experience.filter(e => !existing.some(ex =>
+      ex.title?.toLowerCase() === e.title?.toLowerCase() &&
+      ex.org?.toLowerCase().slice(0, 8) === e.org?.toLowerCase().slice(0, 8) &&
+      ex.startDate === e.startDate
+    ));
+    sd.experience = [...existing, ...newEntries].sort((a, b) =>
+      (b.startDate || '0000-00').localeCompare(a.startDate || '0000-00')
+    );
+  }
+  sd.resumeUploaded = true;
+  sd.profile.updatedAt = new Date().toISOString();
+  return recomputeCompleteness(sd);
 }
 
 async function runParseJob(jobId, resumeId, studentUid, fileBuffer, mimeType, originalName) {
@@ -284,21 +309,33 @@ async function runParseJob(jobId, resumeId, studentUid, fileBuffer, mimeType, or
         .run(JSON.stringify({ skills_count: skillsCount, experience_count: expCount, skills: parsed.skills || [], experience: parsed.experience || [] }), resumeId);
     }
 
-    // Merge into student profile
+    // Merge into student profile (agentic merge, falls back to programmatic)
     const student = db.prepare('SELECT * FROM cdp_students WHERE uid=?').get(studentUid);
     if (student) {
       try {
-        const sd = student.student_data_json ? JSON.parse(student.student_data_json) : {
+        const existingProfile = student.student_data_json ? JSON.parse(student.student_data_json) : {
           profile: { firstName: student.first_name || '', lastName: student.last_name || '', email: student.email || '', school: student.school || '', year: '', major: student.major || '', gradYear: '', createdAt: student.created_at, updatedAt: new Date().toISOString() },
           interests: [], skills: [], goals: [], targetTimeline: '', gpa: null, experienceLevel: '', profileCompleteness: 0, savedPrograms: [], gapAnalyses: [], resumeUploaded: false,
         };
 
-        const merged = mergeStudentData(sd, parsed, resumeId);
+        let merged;
+        try {
+          console.log(`[resume] Running agentic merge for ${studentUid}...`);
+          merged = await mergeWithClaude(existingProfile, parsed);
+          console.log(`[resume] Agentic merge complete — ${(merged.skills || []).length} skills, ${(merged.experience || []).length} exp entries`);
+        } catch (mergeErr) {
+          console.warn(`[resume] Agentic merge failed, using programmatic fallback: ${mergeErr.message}`);
+          merged = mergeStudentDataFallback({ ...existingProfile }, parsed);
+        }
+
+        // Ensure resumeUploaded flag and timestamp
+        merged.resumeUploaded = true;
+        if (merged.profile) merged.profile.updatedAt = new Date().toISOString();
 
         const colUpdates = {};
-        if (parsed.school && !student.school) colUpdates.school = parsed.school;
-        if (parsed.major && !student.major) colUpdates.major = parsed.major;
-        if (parsed.gradYear && !student.graduation_year) colUpdates.graduation_year = parseInt(parsed.gradYear) || null;
+        if (merged.profile?.school && !student.school) colUpdates.school = merged.profile.school;
+        if (merged.profile?.major && !student.major) colUpdates.major = merged.profile.major;
+        if (merged.profile?.gradYear && !student.graduation_year) colUpdates.graduation_year = parseInt(merged.profile.gradYear) || null;
 
         if (Object.keys(colUpdates).length > 0) {
           const sets = Object.keys(colUpdates).map(k => `${k} = ?`).join(', ');
@@ -309,9 +346,7 @@ async function runParseJob(jobId, resumeId, studentUid, fileBuffer, mimeType, or
         db.prepare(`UPDATE cdp_students SET student_data_json=?, updated_at=datetime('now') WHERE uid=?`)
           .run(JSON.stringify(merged), studentUid);
 
-        const skillsCount = (parsed.skills || []).length;
-        const expCount = (parsed.experience || []).length;
-        console.log(`[resume] Job ${jobId} complete for ${studentUid}: ${skillsCount} skills, ${expCount} exp entries`);
+        console.log(`[resume] Job ${jobId} saved for ${studentUid}: completeness=${merged.profileCompleteness}%`);
       } catch (e) {
         console.error('[resume] Failed to merge student data:', e.message);
       }
