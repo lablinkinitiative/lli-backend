@@ -170,7 +170,7 @@ Return ONLY a valid JSON object (no markdown fences, no explanation, just raw JS
     "studentScores": [<0.0-1.0>, <0.0-1.0>, <0.0-1.0>, <0.0-1.0>],
     "requiredScores": [<0.0-1.0>, <0.0-1.0>, <0.0-1.0>, <0.0-1.0>]
   },
-  "timeline_est": "<realistic estimate like '2-3 semesters' or 'Ready now' or 'Competitive now with focused prep'>"
+  "timeline_est": "<SHORT phrase only — max 15 words — e.g. 'Ready now', '2-3 semesters with focused prep', 'Competitive for 2026 roles', 'PhD completion ~May 2028'>"
 }
 
 Rules:
