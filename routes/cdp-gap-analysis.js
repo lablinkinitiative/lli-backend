@@ -388,7 +388,7 @@ router.delete('/gap-analysis/:id', authMiddleware, (req, res) => {
   res.json({ ok: true });
 });
 
-// POST /api/cdp/gap-analysis/auto-init — queue top-3 pathway analyses
+// POST /api/cdp/gap-analysis/auto-init — queue gap analyses for assigned tier pathways
 router.post('/gap-analysis/auto-init', authMiddleware, (req, res) => {
   const studentUid = req.student.uid;
   const student = db.prepare('SELECT * FROM cdp_students WHERE uid=?').get(studentUid);
@@ -401,26 +401,56 @@ router.post('/gap-analysis/auto-init', authMiddleware, (req, res) => {
     return res.json({ ok: true, queued: 0, message: 'Profile completeness < 60%, skipping auto-init' });
   }
 
-  // Pick top 3 pathways by interest alignment (simple heuristic)
-  const interests = (sd.interests || []).map(i => i.toLowerCase());
-  const skills = (sd.skills || []).map(s => s.toLowerCase());
+  // Use the student's assigned tier pathways (high/medium/stretch) if they exist
+  const tierRows = db.prepare(
+    `SELECT sp.pathway_id, sp.fit_tier, cp.title, cp.short_name, cp.career_field,
+            cp.description, cp.entry_level, cp.requirements_json
+     FROM cdp_student_pathways sp
+     LEFT JOIN cdp_pathways cp ON cp.id = sp.pathway_id
+     WHERE sp.student_uid = ?`
+  ).all(studentUid);
 
-  const scored = PATHWAYS.map(pathway => {
-    let score = 0;
-    const pw = JSON.stringify(pathway).toLowerCase();
-    for (const interest of interests) {
-      if (pw.includes(interest.split(' ')[0])) score += 2;
-    }
-    for (const skill of skills) {
-      const skillLow = skill.toLowerCase();
-      if ((pathway.skills || []).some(s => s.name.toLowerCase().includes(skillLow))) score += 1;
-    }
-    return { pathway, score };
-  }).sort((a, b) => b.score - a.score).slice(0, 3);
+  let pathwaysToAnalyze = [];
+
+  if (tierRows.length > 0) {
+    // Analyze the student's actual assigned pathways
+    pathwaysToAnalyze = tierRows.map(row => ({
+      id: row.pathway_id,
+      name: row.title || row.pathway_id,
+      shortName: row.short_name,
+      track: row.career_field,
+      description: row.description,
+      targetLevel: (row.entry_level || '').split(','),
+      timeToReady: null,
+      skills: (() => {
+        try {
+          const req = JSON.parse(row.requirements_json || '{}');
+          return (req.skills || []).map(s => ({ name: s, weight: 3, category: 'General' }));
+        } catch { return []; }
+      })(),
+    }));
+  } else {
+    // No assigned pathways yet — fall back to interest-scored selection from static list
+    const interests = (sd.interests || []).map(i => i.toLowerCase());
+    const skills = (sd.skills || []).map(s => s.toLowerCase());
+
+    pathwaysToAnalyze = PATHWAYS.map(pathway => {
+      let score = 0;
+      const pw = JSON.stringify(pathway).toLowerCase();
+      for (const interest of interests) {
+        if (pw.includes(interest.split(' ')[0])) score += 2;
+      }
+      for (const skill of skills) {
+        const skillLow = skill.toLowerCase();
+        if ((pathway.skills || []).some(s => s.name.toLowerCase().includes(skillLow))) score += 1;
+      }
+      return { pathway, score };
+    }).sort((a, b) => b.score - a.score).slice(0, 3).map(({ pathway }) => pathway);
+  }
 
   const queued = [];
-  for (const { pathway } of scored) {
-    // Only queue if no recent complete analysis exists
+  for (const pathway of pathwaysToAnalyze) {
+    // Only queue if no recent analysis exists
     const existing = db.prepare(
       `SELECT id, status FROM cdp_gap_analyses_v2 WHERE student_uid=? AND pathway_id=?`
     ).get(studentUid, pathway.id);
