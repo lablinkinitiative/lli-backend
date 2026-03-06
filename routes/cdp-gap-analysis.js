@@ -430,22 +430,8 @@ router.post('/gap-analysis/auto-init', authMiddleware, (req, res) => {
       })(),
     }));
   } else {
-    // No assigned pathways yet — fall back to interest-scored selection from static list
-    const interests = (sd.interests || []).map(i => i.toLowerCase());
-    const skills = (sd.skills || []).map(s => s.toLowerCase());
-
-    pathwaysToAnalyze = PATHWAYS.map(pathway => {
-      let score = 0;
-      const pw = JSON.stringify(pathway).toLowerCase();
-      for (const interest of interests) {
-        if (pw.includes(interest.split(' ')[0])) score += 2;
-      }
-      for (const skill of skills) {
-        const skillLow = skill.toLowerCase();
-        if ((pathway.skills || []).some(s => s.name.toLowerCase().includes(skillLow))) score += 1;
-      }
-      return { pathway, score };
-    }).sort((a, b) => b.score - a.score).slice(0, 3).map(({ pathway }) => pathway);
+    // No assigned pathways yet — pathway generation handles gap analysis queuing after assigning pathways
+    return res.json({ ok: true, queued: 0, message: 'No assigned pathways yet — pathway generation will queue gap analyses' });
   }
 
   const queued = [];
