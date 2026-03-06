@@ -709,12 +709,11 @@ router.get('/pathways/:id', (req, res) => {
 
   // Get mapped programs
   const programs = db.prepare(`
-    SELECT p.id, p.title, p.organization, p.sector, p.tags, p.deadline, p.remote, pp.relevance_score
+    SELECT p.id, p.slug, p.title, p.organization, p.sector, p.tags, p.deadline, p.remote, pp.relevance_score
     FROM cdp_pathway_programs pp
     JOIN cdp_programs p ON p.id=pp.program_id
     WHERE pp.pathway_id=? AND p.is_active=1
     ORDER BY pp.relevance_score DESC
-    LIMIT 20
   `).all(pw.id);
 
   res.json({
