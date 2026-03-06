@@ -62,6 +62,8 @@ db.exec(`
   )
 `);
 db.exec(`CREATE INDEX IF NOT EXISTS idx_sp_student ON cdp_student_pathways(student_uid)`);
+// Migration: add display_order column if it doesn't exist
+try { db.exec(`ALTER TABLE cdp_student_pathways ADD COLUMN display_order INTEGER`); } catch {}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS cdp_pathway_programs (
@@ -496,11 +498,12 @@ Return ONLY a valid JSON object (no markdown):
       const pathwayId = result.pathway_id || result.id;
       const id = uuidv4();
 
+      const tierOrder = { high: 1, medium: 2, stretch: 3 }[tier] || 99;
       db.prepare(`
         INSERT INTO cdp_student_pathways
-        (id, student_uid, pathway_id, fit_score, fit_tier, assigned_at, is_default, profile_snapshot_hash, notes)
-        VALUES (?, ?, ?, ?, ?, datetime('now'), 1, ?, ?)
-      `).run(id, studentUid, pathwayId, result.fit_score, tier, hash, result.reasoning || '');
+        (id, student_uid, pathway_id, fit_score, fit_tier, assigned_at, is_default, profile_snapshot_hash, notes, display_order)
+        VALUES (?, ?, ?, ?, ?, datetime('now'), 1, ?, ?, ?)
+      `).run(id, studentUid, pathwayId, result.fit_score, tier, hash, result.reasoning || '', tierOrder);
 
       // Increment usage count
       db.prepare('UPDATE cdp_pathways SET usage_count=usage_count+1 WHERE id=?').run(pathwayId);
@@ -760,7 +763,7 @@ router.get('/students/me/pathways', authMiddleware, (req, res) => {
     FROM cdp_student_pathways sp
     JOIN cdp_pathways p ON p.id=sp.pathway_id
     WHERE sp.student_uid=?
-    ORDER BY CASE sp.fit_tier WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'stretch' THEN 3 ELSE 4 END
+    ORDER BY COALESCE(sp.display_order, CASE sp.fit_tier WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'stretch' THEN 3 ELSE 99 END), sp.assigned_at
   `).all(req.student.uid);
 
   const result = assignments.map(a => {
@@ -920,6 +923,65 @@ router.post('/students/me/pathways/swap', authMiddleware, async (req, res) => {
       career_field: pathway.career_field,
     },
   });
+});
+
+// POST /api/cdp/students/me/pathways/save — add any pathway to "Your Pathways"
+// Body: { pathway_id: string }
+router.post('/students/me/pathways/save', authMiddleware, (req, res) => {
+  const { pathway_id } = req.body || {};
+  const uid = req.student.uid;
+
+  if (!pathway_id) return res.status(400).json({ error: 'pathway_id is required' });
+
+  const pathway = db.prepare('SELECT * FROM cdp_pathways WHERE id=?').get(pathway_id);
+  if (!pathway) return res.status(404).json({ error: 'Pathway not found' });
+
+  // Check if already saved
+  const existing = db.prepare('SELECT id FROM cdp_student_pathways WHERE student_uid=? AND pathway_id=?').get(uid, pathway_id);
+  if (existing) return res.json({ ok: true, message: 'Already saved', already_exists: true });
+
+  // Get current max display_order so new entry goes to end
+  const maxOrder = db.prepare('SELECT COALESCE(MAX(display_order), 0) as m FROM cdp_student_pathways WHERE student_uid=?').get(uid);
+  const nextOrder = (maxOrder?.m || 0) + 1;
+
+  const id = uuidv4();
+  db.prepare(`
+    INSERT INTO cdp_student_pathways
+    (id, student_uid, pathway_id, fit_score, fit_tier, assigned_at, is_default, display_order, notes)
+    VALUES (?, ?, ?, NULL, NULL, datetime('now'), 0, ?, 'Manually saved')
+  `).run(id, uid, pathway_id, nextOrder);
+
+  db.prepare('UPDATE cdp_pathways SET usage_count=usage_count+1 WHERE id=?').run(pathway_id);
+
+  res.json({ ok: true, assignment_id: id, pathway: { id: pathway.id, title: pathway.title, short_name: pathway.short_name } });
+});
+
+// DELETE /api/cdp/students/me/pathways/:pathwayId — remove from Your Pathways
+router.delete('/students/me/pathways/:pathwayId', authMiddleware, (req, res) => {
+  const uid = req.student.uid;
+  const row = db.prepare('SELECT id FROM cdp_student_pathways WHERE student_uid=? AND pathway_id=?').get(uid, req.params.pathwayId);
+  if (!row) return res.status(404).json({ error: 'Pathway not in your list' });
+  db.prepare('DELETE FROM cdp_student_pathways WHERE id=?').run(row.id);
+  res.json({ ok: true });
+});
+
+// PUT /api/cdp/students/me/pathways/reorder — save user-defined order
+// Body: { order: [pathway_id, pathway_id, ...] } — ordered list of pathway IDs
+router.put('/students/me/pathways/reorder', authMiddleware, (req, res) => {
+  const { order } = req.body || {};
+  const uid = req.student.uid;
+
+  if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be an array of pathway IDs' });
+
+  const update = db.prepare('UPDATE cdp_student_pathways SET display_order=? WHERE student_uid=? AND pathway_id=?');
+  const updateMany = db.transaction((items) => {
+    for (const { pathwayId, idx } of items) {
+      update.run(idx + 1, uid, pathwayId);
+    }
+  });
+
+  updateMany(order.map((pathwayId, idx) => ({ pathwayId, idx })));
+  res.json({ ok: true });
 });
 
 module.exports = router;
