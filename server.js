@@ -117,7 +117,7 @@ if (!process.env.CDP_JWT_SECRET) {
 try {
   const db = require('./db/database');
   const stuckAnalyses = db.prepare(
-    "UPDATE cdp_gap_analyses_v2 SET status='error', error='Service restarted while processing — please re-run', updated_at=datetime('now') WHERE status='processing'"
+    "UPDATE cdp_gap_analyses_v2 SET status='error', error='Service restarted while processing — please re-run', updated_at=datetime('now') WHERE status IN ('processing','queued')"
   ).run().changes;
   const stuckResumes = db.prepare(
     "UPDATE cdp_resumes SET status='error', error='Service restarted while processing — please re-upload', updated_at=datetime('now') WHERE status='processing'"
