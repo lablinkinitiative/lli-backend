@@ -112,6 +112,22 @@ if (!process.env.CDP_JWT_SECRET) {
   console.warn('[lablink-api] WARNING: CDP_JWT_SECRET not set — using insecure dev fallback. Set this in systemd service env!');
 }
 
+// Startup cleanup: reset any analyses/resumes stuck in 'processing' state from previous run
+// This happens when the service restarts while a Claude subprocess was running
+try {
+  const db = require('./db/database');
+  const stuckAnalyses = db.prepare(
+    "UPDATE cdp_gap_analyses_v2 SET status='error', error='Service restarted while processing — please re-run', updated_at=datetime('now') WHERE status='processing'"
+  ).run().changes;
+  const stuckResumes = db.prepare(
+    "UPDATE cdp_resumes SET status='error', error='Service restarted while processing — please re-upload', updated_at=datetime('now') WHERE status='processing'"
+  ).run().changes;
+  if (stuckAnalyses > 0) console.log(`[lablink-api] Reset ${stuckAnalyses} stuck gap analyses`);
+  if (stuckResumes > 0) console.log(`[lablink-api] Reset ${stuckResumes} stuck resume parse jobs`);
+} catch (e) {
+  console.warn('[lablink-api] Startup cleanup failed:', e.message);
+}
+
 // Error handler
 app.use((err, req, res, next) => {
   console.error('[ERROR]', err.stack || err.message);
