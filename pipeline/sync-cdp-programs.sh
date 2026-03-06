@@ -54,9 +54,7 @@ TEAM_ID = "$TEAM_ID"
 PROJECT_NAME = "$PROJECT_NAME"
 DIST_DIR = Path("$CDP_APP_DIR/dist")
 
-def upload_file(path, rel_path):
-    with open(path, 'rb') as f:
-        content = f.read()
+def upload_bytes(content, rel_path):
     sha = hashlib.sha1(content).hexdigest()
     req = urllib.request.Request(
         f'https://api.vercel.com/v2/files?teamId={TEAM_ID}',
@@ -74,18 +72,25 @@ def upload_file(path, rel_path):
         if e.code != 409: raise  # 409 = already exists, OK
     return {'file': rel_path, 'sha': sha, 'size': len(content)}
 
+def upload_file(path, rel_path):
+    with open(path, 'rb') as f:
+        return upload_bytes(f.read(), rel_path)
+
 files = []
 for p in DIST_DIR.rglob('*'):
     if p.is_file():
         rel = str(p.relative_to(DIST_DIR))
         files.append(upload_file(p, rel))
 
-print(f"Uploaded {len(files)} files")
+# Upload minimal vercel.json with ONLY the SPA rewrite (no buildCommand — avoids re-build trigger)
+spa_vercel = json.dumps({"rewrites": [{"source": "/(.*)", "destination": "/index.html"}]}).encode()
+files.append(upload_bytes(spa_vercel, 'vercel.json'))
+
+print(f"Uploaded {len(files)} files (incl. vercel.json for SPA routing)")
 
 deploy_data = {
     "name": PROJECT_NAME,
     "files": files,
-    "projectSettings": {"framework": "vite", "outputDirectory": "dist"},
     "target": "production",
     "routes": [
         {"handle": "filesystem"},
