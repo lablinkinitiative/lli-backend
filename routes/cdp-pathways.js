@@ -424,9 +424,24 @@ Return ONLY a valid JSON object (no markdown):
 
         if (!newPw.id || !newPw.title) throw new Error('Invalid pathway generated');
 
+        // Check for existing pathway with same title (prevents duplicates on re-generation)
+        const existingByTitle = db.prepare('SELECT id FROM cdp_pathways WHERE title=?').get(newPw.title);
+        if (existingByTitle) {
+          // Reuse existing pathway rather than creating a duplicate
+          console.log(`  Reusing existing pathway "${newPw.title}" (${existingByTitle.id})`);
+          tiers[tier] = {
+            pathway_id: existingByTitle.id,
+            fit_score: newPw.fit_score || targetFit,
+            tier,
+            is_genuine_match: true,
+            reasoning: newPw.fit_reasoning || `Matched existing ${tier} pathway for this student.`,
+          };
+          continue;
+        }
+
         // Ensure unique ID
-        const existingIds = db.prepare('SELECT id FROM cdp_pathways WHERE id=?').get(newPw.id);
-        if (existingIds) newPw.id = newPw.id + '-' + Date.now();
+        const existingById = db.prepare('SELECT id FROM cdp_pathways WHERE id=?').get(newPw.id);
+        if (existingById) newPw.id = newPw.id + '-' + Date.now();
 
         // Save to library
         db.prepare(`
