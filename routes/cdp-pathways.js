@@ -300,8 +300,16 @@ CRITICAL INSTRUCTIONS — READ CAREFULLY:
    if none of the candidates genuinely serve the student.
 3. ALSO DO NOT always create new — if a strong match exists (score well above the tier minimum),
    assign it. Save generation for when no real match exists.
-4. Assess based on: what the student has DONE (experience), not just listed keywords.
-5. One-line reasoning should explain WHY it's genuine or not.
+4. WORK EXPERIENCE IS THE PRIMARY SIGNAL. If the student has professional work entries
+   (type="work" with a startDate), those job titles, organizations, and domains define
+   their actual trajectory — weight this far above skills keywords or academic year.
+   A student employed full-time as an ML engineer is NOT a beginner regardless of their
+   graduation year or empty interests/goals fields.
+5. If the student is currently employed (work entry with no endDate) while also pursuing
+   a degree, they are a "working professional" — prioritize pathways appropriate for
+   experienced professionals, NOT entry-level or apprenticeship pathways.
+6. Assess based on: what the student has DONE (experience), not just listed keywords.
+7. One-line reasoning should explain WHY it's genuine or not, citing specific experience.
 
 Return ONLY a valid JSON array (no markdown, no explanation):
 [
@@ -326,12 +334,22 @@ async function runGeneration(jobId, studentUid, sd) {
   try {
     job.status = 'running';
 
-    // Step 1: Build student keywords
+    // Step 1: Build student keywords (include work experience signals for better pathway matching)
+    const workExpKeywords = (sd.experience || [])
+      .filter(e => e.type === 'work')
+      .flatMap(e => [
+        e.title || '',
+        e.org || '',
+        // pull significant words from description (skip short words)
+        ...(e.description || '').split(/\W+/).filter(w => w.length > 6).slice(0, 8),
+      ]);
+
     const keywords = [
       ...(sd.skills || []),
       ...(sd.interests || []),
       ...(sd.goals || []),
       sd.profile?.major,
+      ...workExpKeywords,
     ].filter(Boolean).join(' ');
 
     const entryLevel = sd.profile?.year || '';
