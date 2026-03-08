@@ -108,7 +108,18 @@ router.get('/programs', (req, res) => {
   if (field) { sql += ' AND stem_fields LIKE ?'; params.push(`%${field}%`); }
 
   // Tag-based filters (JSON search in tags column)
-  if (career_stage) { sql += ' AND (tags LIKE ? OR eligibility LIKE ?)'; params.push(`%"${career_stage}"%`, `%${career_stage}%`); }
+  // career_stage supports comma-separated multi-value: e.g. "graduate,professional"
+  if (career_stage) {
+    const stages = career_stage.split(',').map(s => s.trim()).filter(Boolean);
+    if (stages.length === 1) {
+      sql += ' AND (tags LIKE ? OR eligibility LIKE ?)';
+      params.push(`%"${stages[0]}"%`, `%${stages[0]}%`);
+    } else {
+      const orClauses = stages.map(() => '(tags LIKE ? OR eligibility LIKE ?)').join(' OR ');
+      sql += ` AND (${orClauses})`;
+      for (const s of stages) { params.push(`%"${s}"%`, `%${s}%`); }
+    }
+  }
   if (benefits) { sql += ' AND tags LIKE ?'; params.push(`%"${benefits}"%`); }
   if (duration) { sql += ' AND tags LIKE ?'; params.push(`%"${duration}"%`); }
   if (focus_type) { sql += ' AND tags LIKE ?'; params.push(`%"${focus_type}"%`); }
@@ -693,7 +704,7 @@ router.post('/students/me/gap-analyses', authMiddleware, [
 
 router.get('/students/me/full-data', authMiddleware, (req, res) => {
   const student = db.prepare(
-    'SELECT uid, email, first_name, last_name, school, graduation_year, major, bio, linkedin_url, student_data_json, created_at FROM cdp_students WHERE uid = ?'
+    'SELECT uid, email, first_name, last_name, school, graduation_year, major, bio, linkedin_url, student_data_json, career_stage, created_at FROM cdp_students WHERE uid = ?'
   ).get(req.student.uid);
   if (!student) return res.status(404).json({ error: 'Student not found' });
 
@@ -714,9 +725,9 @@ router.get('/students/me/full-data', authMiddleware, (req, res) => {
     createdAt: stored.profile?.createdAt || student.created_at,
     updatedAt: stored.profile?.updatedAt || student.created_at,
   };
-  // Always compute career_stage fresh from year + experience (never use stored value —
-  // it could be stale or a previously computed value put back into the JSON blob)
-  profileData.career_stage = inferCareerStage(profileData, experience);
+  // Use stored career_stage column if present (set on every profile/experience save).
+  // Fall back to fresh computation for legacy records that predate the column.
+  profileData.career_stage = student.career_stage || inferCareerStage(profileData, experience);
 
   const result = {
     profile: profileData,
@@ -746,21 +757,26 @@ router.put('/students/me/full-data', authMiddleware, (req, res) => {
   const data = req.body;
   const json = JSON.stringify(data);
 
+  // Compute career_stage from profile + experience and store in dedicated column
+  const computedStage = inferCareerStage(data.profile || {}, data.experience || []);
+
   // Also update top-level columns from profile
   db.prepare(`
     UPDATE cdp_students SET
-      first_name      = COALESCE(?, first_name),
-      last_name       = COALESCE(?, last_name),
-      school          = COALESCE(?, school),
-      major           = COALESCE(?, major),
+      first_name        = COALESCE(?, first_name),
+      last_name         = COALESCE(?, last_name),
+      school            = COALESCE(?, school),
+      major             = COALESCE(?, major),
+      career_stage      = ?,
       student_data_json = ?,
-      updated_at      = datetime('now')
+      updated_at        = datetime('now')
     WHERE uid = ?
   `).run(
     data.profile?.firstName || null,
     data.profile?.lastName || null,
     data.profile?.school || null,
     data.profile?.major || null,
+    computedStage,
     json,
     req.student.uid
   );

@@ -22,6 +22,7 @@ const migrations = [
   "ALTER TABLE cdp_programs ADD COLUMN sector TEXT",
   "ALTER TABLE cdp_programs ADD COLUMN categories TEXT",
   "ALTER TABLE cdp_students ADD COLUMN google_id TEXT",
+  "ALTER TABLE cdp_students ADD COLUMN career_stage TEXT",
   // Indexes for frequently queried columns
   "CREATE INDEX IF NOT EXISTS idx_cdp_students_uid ON cdp_students(uid)",
   "CREATE INDEX IF NOT EXISTS idx_cdp_students_email ON cdp_students(email)",
