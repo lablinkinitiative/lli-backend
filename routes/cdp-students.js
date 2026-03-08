@@ -4,7 +4,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const db = require('../db/database');
 const { authMiddleware } = require('./cdp-auth');
-const { inferCareerStage } = require('../lib/career-stage');
+const { inferCareerStages, parseCareerStages } = require('../lib/career-stage');
 
 const router = express.Router();
 
@@ -725,9 +725,11 @@ router.get('/students/me/full-data', authMiddleware, (req, res) => {
     createdAt: stored.profile?.createdAt || student.created_at,
     updatedAt: stored.profile?.updatedAt || student.created_at,
   };
-  // Use stored career_stage column if present (set on every profile/experience save).
-  // Fall back to fresh computation for legacy records that predate the column.
-  profileData.career_stage = student.career_stage || inferCareerStage(profileData, experience);
+  // Parse stored career_stage (JSON array or legacy string), fall back to fresh inference.
+  const storedStages = parseCareerStages(student.career_stage);
+  profileData.career_stage = storedStages.length > 0
+    ? storedStages
+    : inferCareerStages(profileData, experience);
 
   const result = {
     profile: profileData,
@@ -757,8 +759,9 @@ router.put('/students/me/full-data', authMiddleware, (req, res) => {
   const data = req.body;
   const json = JSON.stringify(data);
 
-  // Compute career_stage from profile + experience and store in dedicated column
-  const computedStage = inferCareerStage(data.profile || {}, data.experience || []);
+  // Compute career stages array from profile + experience and store as JSON
+  const computedStages = inferCareerStages(data.profile || {}, data.experience || []);
+  const computedStage = JSON.stringify(computedStages);
 
   // Also update top-level columns from profile
   db.prepare(`

@@ -16,6 +16,7 @@ function getClaudeToken() {
   } catch { return null; }
 }
 const { authMiddleware } = require('./cdp-auth');
+const { inferCareerStages, parseCareerStages } = require('../lib/career-stage');
 const db = require('../db/database');
 
 const router = express.Router();
@@ -80,6 +81,7 @@ Return exactly this structure (use null for missing fields, empty array [] for m
   "school": "Most recent or primary university name or null",
   "major": "Field of study or null",
   "year": "one of: Freshman, Sophomore, Junior, Senior, Graduate, PhD, Community College, Other — infer from graduation year and degree level, or null",
+  "career_stage": ["array of applicable stages — can include multiple: high_school|community_college|undergraduate|graduate|phd|postdoc|professional — e.g. grad student with full-time job = [\"graduate\",\"professional\"]; undergrad with internship still in school = [\"undergraduate\"]; working professional with no current enrollment = [\"professional\"]"],
   "gradYear": "4-digit expected graduation year or null",
   "skills": ["Python", "MATLAB", "etc — technical and professional skills only, extracted from Skills section and throughout resume"],
   "experience": [
@@ -132,6 +134,7 @@ RULES:
 3. PROFILE FIELDS — prefer non-null, more complete values:
    - school, major, year, gradYear: update if new value is more complete
    - GPA: keep existing numeric gpa if set; adopt new value only if existing is null
+   - career_stage: ALWAYS recompute as an array from the merged profile + experience. A person can have multiple stages simultaneously (e.g. grad student with a current job = ["graduate","professional"]). Valid values: high_school, community_college, undergraduate, graduate, phd, postdoc, professional
 4. PRESERVE exactly from existing: interests, goals, targetTimeline, experienceLevel, savedPrograms, gapAnalyses
 5. SORT experience by startDate descending (most recent first)
 6. For merged experience entries, ensure each has a unique "id" (8-char hex)
@@ -146,6 +149,7 @@ Return ONLY a valid JSON object — NO markdown, NO explanation, NO code fences.
     "year": "...",
     "major": "...",
     "gradYear": "...",
+    "career_stage": ["array e.g. [\"graduate\",\"professional\"] — recompute from all merged data"],
     "createdAt": "...",
     "updatedAt": "<ISO timestamp of now>"
   },
@@ -343,10 +347,16 @@ async function runParseJob(jobId, resumeId, studentUid, fileBuffer, mimeType, or
             .run(...Object.values(colUpdates), studentUid);
         }
 
-        db.prepare(`UPDATE cdp_students SET student_data_json=?, updated_at=datetime('now') WHERE uid=?`)
-          .run(JSON.stringify(merged), studentUid);
+        // Compute and store career_stage from the merged profile + experience
+        const agentStages = parseCareerStages(merged.profile?.career_stage);
+        const computedStages = agentStages.length > 0
+          ? agentStages
+          : inferCareerStages(merged.profile || {}, merged.experience || []);
 
-        console.log(`[resume] Job ${jobId} saved for ${studentUid}: completeness=${merged.profileCompleteness}%`);
+        db.prepare(`UPDATE cdp_students SET student_data_json=?, career_stage=?, updated_at=datetime('now') WHERE uid=?`)
+          .run(JSON.stringify(merged), JSON.stringify(computedStages), studentUid);
+
+        console.log(`[resume] Job ${jobId} saved for ${studentUid}: completeness=${merged.profileCompleteness}%, stages=${JSON.stringify(computedStages)}`);
       } catch (e) {
         console.error('[resume] Failed to merge student data:', e.message);
       }
