@@ -714,8 +714,9 @@ router.get('/students/me/full-data', authMiddleware, (req, res) => {
     createdAt: stored.profile?.createdAt || student.created_at,
     updatedAt: stored.profile?.updatedAt || student.created_at,
   };
-  // Auto-compute career_stage if not explicitly set
-  profileData.career_stage = stored.profile?.career_stage || inferCareerStage(profileData, experience);
+  // Always compute career_stage fresh from year + experience (never use stored value —
+  // it could be stale or a previously computed value put back into the JSON blob)
+  profileData.career_stage = inferCareerStage(profileData, experience);
 
   const result = {
     profile: profileData,
