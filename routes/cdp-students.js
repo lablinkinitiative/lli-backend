@@ -4,6 +4,7 @@ const express = require('express');
 const { body, validationResult } = require('express-validator');
 const db = require('../db/database');
 const { authMiddleware } = require('./cdp-auth');
+const { inferCareerStage } = require('../lib/career-stage');
 
 const router = express.Router();
 
@@ -701,18 +702,23 @@ router.get('/students/me/full-data', authMiddleware, (req, res) => {
   try { stored = student.student_data_json ? JSON.parse(student.student_data_json) : {}; } catch {}
 
   // Merge base profile fields with stored blob
+  const experience = stored.experience || [];
+  const profileData = {
+    firstName: student.first_name || '',
+    lastName: student.last_name || '',
+    school: student.school || '',
+    year: stored.profile?.year || '',
+    major: student.major || '',
+    gradYear: stored.profile?.gradYear || String(student.graduation_year || ''),
+    email: student.email,
+    createdAt: stored.profile?.createdAt || student.created_at,
+    updatedAt: stored.profile?.updatedAt || student.created_at,
+  };
+  // Auto-compute career_stage if not explicitly set
+  profileData.career_stage = stored.profile?.career_stage || inferCareerStage(profileData, experience);
+
   const result = {
-    profile: {
-      firstName: student.first_name || '',
-      lastName: student.last_name || '',
-      school: student.school || '',
-      year: stored.profile?.year || '',
-      major: student.major || '',
-      gradYear: stored.profile?.gradYear || String(student.graduation_year || ''),
-      email: student.email,
-      createdAt: stored.profile?.createdAt || student.created_at,
-      updatedAt: stored.profile?.updatedAt || student.created_at,
-    },
+    profile: profileData,
     interests: stored.interests || [],
     skills: stored.skills || [],
     goals: stored.goals || [],

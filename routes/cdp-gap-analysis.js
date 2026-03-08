@@ -9,6 +9,7 @@ const path = require('path');
 
 const { authMiddleware } = require('./cdp-auth');
 const db = require('../db/database');
+const { inferCareerStage, stageLabel } = require('../lib/career-stage');
 
 const router = express.Router();
 
@@ -97,10 +98,13 @@ function spawnClaude(prompt, timeoutMs = 120000) {
 }
 
 function buildGapPrompt(student, pathway) {
+  const careerStage = inferCareerStage(student.profile || {}, student.experience || []);
   const profile = {
     name: student.profile ? `${student.profile.firstName || ''} ${student.profile.lastName || ''}`.trim() : 'Student',
     school: student.profile?.school || null,
     year: student.profile?.year || null,
+    career_stage: careerStage,
+    career_stage_label: stageLabel(careerStage),
     major: student.profile?.major || null,
     gpa: student.gpa || null,
     gradYear: student.profile?.gradYear || null,
@@ -140,6 +144,7 @@ Analyze this student's readiness for this pathway. Think carefully about:
 - The QUALITY of their experience, not just presence/absence of keywords
 - Their stated goals alignment with this pathway's outcomes
 - Practical next steps specific to THEIR situation
+- IMPORTANT: The student's career stage is "${profile.career_stage_label}". Tailor all recommendations to programs and next steps that are appropriate for this career stage. Do NOT recommend entry-level apprenticeships or high-school programs to graduate students or professionals.
 
 Return ONLY a valid JSON object (no markdown fences, no explanation, just raw JSON starting with {):
 {

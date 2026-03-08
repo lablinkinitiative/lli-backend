@@ -22,6 +22,7 @@ const path = require('path');
 
 const { authMiddleware } = require('./cdp-auth');
 const db = require('../db/database');
+const { inferCareerStage, stageLabel } = require('../lib/career-stage');
 
 const router = express.Router();
 
@@ -253,10 +254,13 @@ function mapProgramsToPathway(pathwayId, keywords) {
 // ─── Claude scoring prompt ────────────────────────────────────────────────────
 
 function buildScoringPrompt(student, candidates) {
+  const careerStage = inferCareerStage(student.profile || {}, student.experience || []);
   const profile = {
     name: `${student.profile?.firstName || ''} ${student.profile?.lastName || ''}`.trim(),
     school: student.profile?.school,
     year: student.profile?.year,
+    career_stage: careerStage,
+    career_stage_label: stageLabel(careerStage),
     major: student.profile?.major,
     gpa: student.gpa,
     skills: student.skills || [],
