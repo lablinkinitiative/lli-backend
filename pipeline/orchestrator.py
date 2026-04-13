@@ -95,6 +95,33 @@ Start your response with [ and end with ]. The response must be valid JSON.
         # Extract JSON from response (handle if agent wraps in markdown)
         programs = extract_json(raw, sector_name)
 
+        # Retry once if agent completed but JSON extraction failed (e.g. model output meta-text instead of JSON)
+        if not programs and result.returncode == 0:
+            log.warning(f"[{sector_name}] 0 programs extracted despite successful run — retrying once...")
+            retry_result = subprocess.run(
+                [
+                    "claude",
+                    "--print",
+                    "--dangerously-skip-permissions",
+                    "--output-format", "text",
+                    "--model", "claude-sonnet-4-6",
+                    full_prompt
+                ],
+                capture_output=True,
+                text=True,
+                timeout=1200,
+                cwd=str(BASE_DIR),
+                env=env
+            )
+            if retry_result.returncode == 0:
+                retry_raw = retry_result.stdout.strip()
+                retry_programs = extract_json(retry_raw, sector_name + ".retry")
+                if retry_programs:
+                    log.info(f"[{sector_name}] Retry succeeded — {len(retry_programs)} programs")
+                    programs = retry_programs
+                else:
+                    log.error(f"[{sector_name}] Retry also yielded 0 programs")
+
         # Save raw output for debugging
         output_file.write_text(json.dumps(programs, indent=2))
         log.info(f"[{sector_name}] Done — {len(programs)} programs extracted → {output_file.name}")
